@@ -1,18 +1,4 @@
-# OS Files
-.DS_Store
-Thumbs.db
-
-# Editor directories and files
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# Logs
+node_modules/
+dist/
+server/node_modules/
 *.log
-npm-debug.log*
-
-# Temporary files
-*.tmp
-.cache/
