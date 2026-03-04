@@ -1,57 +1,52 @@
 <script lang="ts">
   import { townStatus } from '../lib/stores';
-  import type { Rig, Agent } from '../lib/gt-client';
 
-  interface Mission {
-    name: string;
-    rig: string;
-    agents: string[];
-    polecatCount: number;
-    priority: 'high' | 'medium' | 'low';
-  }
+  $: allRigs = [...($townStatus?.rigs ?? [])].sort((a, b) => a.name.localeCompare(b.name));
+  $: activeRigs = allRigs.filter(r => r.agents.some(a => a.running));
+  $: dockedRigs = allRigs.filter(r => !r.agents.some(a => a.running));
 
-  // Derive active missions from rigs that have running agents or polecats
-  $: missions = ($townStatus?.rigs ?? [])
-    .filter(r => r.agents.some(a => a.running) || r.polecat_count > 0)
-    .map(r => ({
-      name: r.name,
-      rig: r.name,
-      agents: r.agents.filter(a => a.running).map(a => a.name),
-      polecatCount: r.polecat_count,
-      priority: r.polecat_count > 0 ? 'high' as const :
-                r.agents.some(a => a.has_work) ? 'medium' as const : 'low' as const,
-    }));
-
-  function priorityIcon(p: string): string {
-    if (p === 'high') return '!';
-    if (p === 'medium') return '~';
-    return '-';
+  function priorityColor(rig: any): string {
+    if (rig.polecat_count > 0) return '#ff4444';
+    if (rig.agents.some((a: any) => a.has_work)) return '#ffa500';
+    return '#4ade80';
   }
 </script>
 
-<div class="side-panel">
+<div class="panel">
   <div class="panel-header">
-    <span class="panel-icon">&#x26A1;</span>
-    <span class="panel-title">ACTIVE RIGS</span>
+    <span class="panel-title">&#9889; ACTIVE MISSIONS</span>
+    <span class="count">{activeRigs.length}</span>
   </div>
-  <div class="panel-content">
-    {#if missions.length === 0}
-      <div class="empty-state">No active rigs</div>
-    {:else}
-      {#each missions as mission}
-        <div class="active-mission">
-          <div class="mission-header">
-            <span class="mission-priority {mission.priority}">{priorityIcon(mission.priority)}</span>
-            <span class="mission-name">{mission.name}</span>
+  <div class="panel-body">
+    {#if activeRigs.length > 0}
+      {#each activeRigs as rig}
+        <div class="mission-card">
+          <div class="priority-circle" style="background: {priorityColor(rig)}; box-shadow: 0 0 8px {priorityColor(rig)}"></div>
+          <div class="mission-info">
+            <div class="mission-name">{rig.name}</div>
+            <div class="progress-bar">
+              <div class="progress-fill" style="width: {rig.agents.length > 0 ? (rig.agents.filter((a: any) => a.running).length / rig.agents.length) * 100 : 0}%"></div>
+            </div>
+            <div class="mission-agents">
+              <span class="agent-chip">{rig.agents.filter((a: any) => a.running).length} agents</span>
+              {#if rig.polecat_count > 0}
+                <span class="agent-chip polecat">{rig.polecat_count} peons</span>
+              {/if}
+              {#if rig.crew_count > 0}
+                <span class="agent-chip crew">{rig.crew_count} crew</span>
+              {/if}
+            </div>
           </div>
-          <div class="mission-agents">
-            {#each mission.agents as agent}
-              <span class="agent-chip">{agent}</span>
-            {/each}
-            {#if mission.polecatCount > 0}
-              <span class="agent-chip polecat">{mission.polecatCount} polecat{mission.polecatCount > 1 ? 's' : ''}</span>
-            {/if}
-          </div>
+        </div>
+      {/each}
+    {/if}
+
+    {#if dockedRigs.length > 0}
+      <div class="section-label">DOCKED</div>
+      {#each dockedRigs as rig}
+        <div class="rig-row docked">
+          <span class="rig-dot"></span>
+          <span class="rig-name">{rig.name}</span>
         </div>
       {/each}
     {/if}
@@ -59,116 +54,173 @@
 </div>
 
 <style>
-  .side-panel {
+  .panel {
     width: 280px;
-    background: linear-gradient(180deg, #2a1f15 0%, #1a1209 100%);
-    border: 3px solid #6b5644;
-    border-top: none;
-    box-shadow: inset 0 0 30px rgba(0,0,0,0.7), 0 0 20px rgba(0,0,0,0.8);
+    background: linear-gradient(180deg, #2d2416 0%, #1a1409 100%);
+    border-left: 3px solid #6b5644;
     display: flex;
     flex-direction: column;
+    flex-shrink: 0;
+    position: relative;
+  }
+
+  .panel::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -1px;
+    bottom: 0;
+    width: 1px;
+    background: linear-gradient(180deg, transparent, #d4af37 50%, transparent);
+    pointer-events: none;
   }
 
   .panel-header {
-    background: linear-gradient(180deg, #4a3a26 0%, #2d2416 100%);
-    border-bottom: 2px solid #8b7355;
-    padding: 12px 15px;
+    padding: 14px 16px;
+    border-bottom: 2px solid #6b5644;
     display: flex;
     align-items: center;
-    gap: 10px;
+    justify-content: space-between;
+    flex-shrink: 0;
+    background: linear-gradient(180deg, #3d2e1a 0%, #2d2416 100%);
+  }
+
+  .panel-title {
+    font-size: 13px;
     font-weight: 700;
-    font-size: 14px;
-    letter-spacing: 2px;
     color: #d4af37;
+    letter-spacing: 3px;
     text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
   }
 
-  .panel-icon { font-size: 18px; }
+  .count {
+    font-size: 13px;
+    font-weight: 700;
+    color: #4ade80;
+    text-shadow: 0 0 6px rgba(74,222,128,0.3);
+  }
 
-  .panel-content {
+  .panel-body {
     flex: 1;
-    padding: 10px;
     overflow-y: auto;
+    padding: 8px;
   }
 
-  .panel-content::-webkit-scrollbar { width: 8px; }
-  .panel-content::-webkit-scrollbar-track { background: rgba(0,0,0,0.3); }
-  .panel-content::-webkit-scrollbar-thumb { background: #6b5644; border-radius: 4px; }
+  .panel-body::-webkit-scrollbar { width: 4px; }
+  .panel-body::-webkit-scrollbar-track { background: transparent; }
+  .panel-body::-webkit-scrollbar-thumb { background: #6b5644; border-radius: 2px; }
 
-  .empty-state {
-    color: #666;
-    text-align: center;
-    padding: 20px;
-    font-size: 12px;
-  }
-
-  .active-mission {
-    background: linear-gradient(135deg, rgba(42,31,21,0.8) 0%, rgba(26,18,9,0.8) 100%);
-    border: 2px solid #6b5644;
-    padding: 12px;
-    margin-bottom: 10px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-  }
-
-  .mission-header {
+  .mission-card {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
+    gap: 10px;
+    padding: 10px 12px;
+    background: rgba(13, 10, 5, 0.4);
+    border-radius: 4px;
+    margin-bottom: 6px;
+    align-items: flex-start;
+    border: 1px solid rgba(107, 86, 68, 0.3);
+    transition: all 0.2s;
   }
 
-  .mission-priority {
+  .mission-card:hover {
+    background: rgba(45, 36, 22, 0.6);
+    border-color: #6b5644;
+  }
+
+  .priority-circle {
     width: 24px;
     height: 24px;
     border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 700;
-    font-size: 16px;
-    color: #fff;
+    flex-shrink: 0;
+    margin-top: 2px;
   }
 
-  .mission-priority.high {
-    background: #ff0000;
-    box-shadow: 0 0 15px rgba(255,0,0,0.5);
-  }
-
-  .mission-priority.medium {
-    background: #ffa500;
-    box-shadow: 0 0 15px rgba(255,165,0,0.5);
-  }
-
-  .mission-priority.low {
-    background: #4ade80;
-    color: #000;
-    box-shadow: 0 0 15px rgba(74,222,128,0.5);
+  .mission-info {
+    flex: 1;
+    min-width: 0;
   }
 
   .mission-name {
-    font-weight: 700;
     font-size: 13px;
+    font-weight: 700;
     color: #d4af37;
-    text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+    margin-bottom: 6px;
+    text-shadow: 1px 1px 3px rgba(0,0,0,0.8);
+  }
+
+  .progress-bar {
+    height: 4px;
+    background: rgba(107, 86, 68, 0.4);
+    border-radius: 2px;
+    margin-bottom: 6px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: #4ade80;
+    border-radius: 2px;
+    transition: width 0.5s ease;
+    box-shadow: 0 0 8px rgba(74, 222, 128, 0.4);
   }
 
   .mission-agents {
     display: flex;
-    flex-wrap: wrap;
     gap: 6px;
+    flex-wrap: wrap;
   }
 
   .agent-chip {
-    background: rgba(0,0,0,0.5);
-    border: 1px solid #6b5644;
-    padding: 4px 10px;
-    font-size: 10px;
-    border-radius: 12px;
-    color: #d4af37;
+    font-size: 9px;
+    font-weight: 600;
+    color: #b39c7a;
+    background: rgba(107, 86, 68, 0.3);
+    padding: 2px 6px;
+    border-radius: 3px;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.6);
   }
 
-  .agent-chip.polecat {
-    border-color: #00bfff;
-    color: #00bfff;
+  .agent-chip.polecat { color: #4fc3f7; }
+  .agent-chip.crew { color: #ce93d8; }
+
+  .section-label {
+    font-size: 9px;
+    font-weight: 700;
+    color: #6b5644;
+    letter-spacing: 3px;
+    padding: 16px 12px 6px;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+  }
+
+  .rig-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    transition: background 0.15s;
+  }
+
+  .rig-row.docked {
+    opacity: 0.4;
+  }
+
+  .rig-row:hover {
+    background: rgba(45, 36, 22, 0.4);
+  }
+
+  .rig-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #6b5644;
+    flex-shrink: 0;
+  }
+
+  .rig-name {
+    color: #b39c7a;
+    font-weight: 500;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.6);
   }
 </style>

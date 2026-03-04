@@ -120,6 +120,25 @@ export interface OptionsResponse {
   escalations?: string[];
 }
 
+// Extract JSON from output that may have trailing warnings
+function extractJSON(raw: string): any {
+  // Find the last closing brace that completes the top-level object
+  let depth = 0;
+  let start = -1;
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] === '{') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (raw[i] === '}') {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        return JSON.parse(raw.substring(start, i + 1));
+      }
+    }
+  }
+  throw new Error('No valid JSON found in output');
+}
+
 // Fetch town status
 export async function getStatus(): Promise<TownStatus> {
   const res = await fetch(`${API_BASE}/run`, {
@@ -129,15 +148,22 @@ export async function getStatus(): Promise<TownStatus> {
   });
   const data: CommandResponse = await res.json();
   if (data.success && data.output) {
-    return JSON.parse(data.output);
+    return extractJSON(data.output);
   }
   throw new Error(data.error || 'Failed to get status');
 }
 
 // Fetch mail inbox
 export async function getMailInbox(): Promise<MailInbox> {
-  const res = await fetch(`${API_BASE}/mail/inbox`);
-  return res.json();
+  try {
+    const res = await fetch(`${API_BASE}/mail/inbox`);
+    const data = await res.json();
+    // API may return error wrapper instead of mail data
+    if (data.messages) return data;
+    return { messages: [], unread_count: 0, total: 0 };
+  } catch {
+    return { messages: [], unread_count: 0, total: 0 };
+  }
 }
 
 // Read a specific mail message
@@ -148,8 +174,12 @@ export async function readMail(id: string): Promise<MailMessage> {
 
 // Get ready work items
 export async function getReady(): Promise<ReadyResponse> {
-  const res = await fetch(`${API_BASE}/ready`);
-  return res.json();
+  try {
+    const res = await fetch(`${API_BASE}/ready`);
+    return await res.json();
+  } catch {
+    return { items: [], by_source: {}, summary: { total: 0, p1_count: 0, p2_count: 0, p3_count: 0 } };
+  }
 }
 
 // Get autocomplete options (rigs, polecats, etc)
@@ -172,6 +202,29 @@ export async function runCommand(command: string, confirmed = false): Promise<Co
     body: JSON.stringify({ command, confirmed }),
   });
   return res.json();
+}
+
+// Bead (issue) from rig beads query
+export interface RigBead {
+  id: string;
+  title: string;
+  type: string;
+  status: string;
+  priority: number;
+  owner?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+// Fetch open beads for a specific rig
+export async function getRigBeads(rig: string): Promise<RigBead[]> {
+  try {
+    const res = await fetch(`${API_BASE}/beads/${encodeURIComponent(rig)}`);
+    const data = await res.json();
+    return data.items ?? [];
+  } catch {
+    return [];
+  }
 }
 
 // Connect to SSE event stream

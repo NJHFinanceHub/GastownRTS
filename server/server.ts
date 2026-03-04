@@ -151,24 +151,6 @@ app.get('/api/events', async (req, res) => {
   }
 });
 
-// Proxy all other GET /api/* → gt dashboard
-app.get('/api/*', async (req, res) => {
-  try {
-    const url = new URL(req.url, GT_DASHBOARD);
-    const upstream = await fetch(url.toString());
-    const contentType = upstream.headers.get('content-type') || '';
-    if (contentType.includes('json')) {
-      const data = await upstream.json();
-      res.json(data);
-    } else {
-      const text = await upstream.text();
-      res.type(contentType).send(text);
-    }
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // Dolt SQL endpoint for direct bead queries
 app.get('/api/beads/:rig', async (req, res) => {
   try {
@@ -196,6 +178,24 @@ app.get('/api/beads/:rig', async (req, res) => {
     } catch {
       res.status(500).json({ error: err.message });
     }
+  }
+});
+
+// Proxy all other GET /api/* → gt dashboard
+app.get('/api/*', async (req, res) => {
+  try {
+    const url = new URL(req.url, GT_DASHBOARD);
+    const upstream = await fetch(url.toString());
+    const contentType = upstream.headers.get('content-type') || '';
+    if (contentType.includes('json')) {
+      const data = await upstream.json();
+      res.json(data);
+    } else {
+      const text = await upstream.text();
+      res.type(contentType).send(text);
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
