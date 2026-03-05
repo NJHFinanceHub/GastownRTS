@@ -133,7 +133,7 @@
     });
   }
 
-  $: $selectedRig, draw($rigs);
+  $: $selectedRig, $rigs, draw($rigs);
   onMount(() => draw($rigs));
 </script>
 

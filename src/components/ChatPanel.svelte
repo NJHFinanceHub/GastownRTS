@@ -5,6 +5,8 @@
 
   let input = '';
   let messagesEl: HTMLDivElement;
+  let mayorTalking = false;
+  let talkTimer: ReturnType<typeof setTimeout> | null = null;
 
   $: msgs = $chatMessages;
 
@@ -13,6 +15,13 @@
     tick().then(() => {
       if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
     });
+  }
+
+  // Trigger mayor talking animation
+  function mayorSpeak(durationMs = 2500) {
+    mayorTalking = true;
+    if (talkTimer) clearTimeout(talkTimer);
+    talkTimer = setTimeout(() => { mayorTalking = false; }, durationMs);
   }
 
   async function send() {
@@ -24,12 +33,13 @@
 
     // Detect if it's a gt command
     if (text.startsWith('gt ') || text.startsWith('bd ')) {
-      const cmd = text.startsWith('gt ') ? text.slice(3) : text;
+      const cmd = text.startsWith('gt ') ? text.slice(3) : text.slice(3);
       addChatMessage('system', `Executing: ${text}`);
       try {
         const res = await runCommand(cmd, true);
         if (res.success) {
           const output = res.output?.trim() || 'Command completed.';
+          mayorSpeak(Math.min(output.length * 30, 4000));
           addChatMessage('mayor', output);
         } else {
           addChatMessage('system', `Error: ${res.error ?? 'Command failed'}`);
@@ -46,21 +56,52 @@
         try {
           const res = await runCommand('status --json', false);
           if (res.success && res.output) {
+            mayorSpeak(1500);
             addChatMessage('mayor', 'Status refreshed. Check the map.');
             window.dispatchEvent(new CustomEvent('gt-refresh'));
           }
         } catch { addChatMessage('system', 'Failed to get status'); }
       } else if (cmd === 'help') {
+        mayorSpeak(3000);
         addChatMessage('mayor', [
           'Available commands:',
           '  gt <command>  — Run any gt command',
           '  bd <command>  — Run any bd command',
           '  /status       — Refresh dashboard',
+          '  /inbox        — Check mail inbox',
+          '  /read <N>     — Read message N',
           '  /help         — Show this help',
           '  /clear        — Clear chat',
           '',
           'Or just type a message to chat.',
         ].join('\n'));
+      } else if (cmd === 'inbox') {
+        addChatMessage('system', 'Checking mail...');
+        try {
+          const res = await runCommand('mail inbox', false);
+          if (res.success && res.output) {
+            mayorSpeak(2000);
+            addChatMessage('mayor', res.output.trim() || 'Inbox empty.');
+          } else {
+            addChatMessage('system', res.error ?? 'Failed to check mail');
+          }
+        } catch { addChatMessage('system', 'Failed to check mail'); }
+      } else if (cmd === 'read') {
+        const msgNum = parts[1];
+        if (!msgNum) {
+          addChatMessage('system', 'Usage: /read <message-number>');
+        } else {
+          addChatMessage('system', `Reading message ${msgNum}...`);
+          try {
+            const res = await runCommand(`mail read ${msgNum}`, false);
+            if (res.success && res.output) {
+              mayorSpeak(2500);
+              addChatMessage('mayor', res.output.trim());
+            } else {
+              addChatMessage('system', res.error ?? 'Failed to read message');
+            }
+          } catch { addChatMessage('system', 'Failed to read message'); }
+        }
       } else if (cmd === 'clear') {
         chatMessages.set([]);
         addChatMessage('system', 'Chat cleared.');
@@ -73,6 +114,7 @@
       try {
         const res = await sendMail('mayor/', 'Chat', text);
         if (res.success) {
+          mayorSpeak(2000);
           addChatMessage('mayor', 'Message received. I\'ll look into it.');
         } else {
           addChatMessage('system', res.error ?? 'Failed to send');
@@ -97,9 +139,27 @@
 </script>
 
 <div class="chat-panel">
+  <!-- Mayor Portrait + Header -->
   <div class="chat-header">
-    <span class="chat-title">&#128172; TOWN HALL</span>
+    <div class="mayor-portrait-frame" class:talking={mayorTalking}>
+      <div class="portrait-border">
+        <img src="/portraits/thrall.png" alt="Mayor" class="mayor-portrait-img" />
+        <!-- Animated talk overlay -->
+        {#if mayorTalking}
+          <div class="talk-overlay"></div>
+        {/if}
+      </div>
+      <!-- Gem indicator at bottom of frame -->
+      <div class="portrait-gem" class:active={mayorTalking}></div>
+    </div>
+    <div class="header-info">
+      <span class="chat-title">TOWN HALL</span>
+      <span class="mayor-name" class:talking={mayorTalking}>
+        {mayorTalking ? 'Mayor is speaking...' : 'Mayor — Idle'}
+      </span>
+    </div>
   </div>
+
   <div class="chat-messages" bind:this={messagesEl}>
     {#if msgs.length === 0}
       <div class="chat-empty">Type a command or message. Try /help</div>
@@ -151,10 +211,90 @@
     pointer-events: none;
   }
 
+  /* ---- Mayor Portrait ---- */
   .chat-header {
-    padding: 6px 12px;
+    padding: 8px 12px;
     border-bottom: 1px solid rgba(107,86,68,0.5);
     flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .mayor-portrait-frame {
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .portrait-border {
+    width: 52px;
+    height: 52px;
+    border: 2px solid #6b5644;
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+    background: #0d0a05;
+    box-shadow: inset 0 0 8px rgba(0,0,0,0.8);
+    transition: border-color 0.3s, box-shadow 0.3s;
+  }
+
+  .mayor-portrait-frame.talking .portrait-border {
+    border-color: #d4af37;
+    box-shadow:
+      inset 0 0 8px rgba(0,0,0,0.8),
+      0 0 12px rgba(212,175,55,0.4),
+      0 0 24px rgba(212,175,55,0.15);
+  }
+
+  .mayor-portrait-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: top center;
+    display: block;
+  }
+
+  /* Talking mouth animation overlay — subtle brightness pulse on lower half */
+  .talk-overlay {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 40%;
+    background: linear-gradient(0deg, rgba(212,175,55,0.15) 0%, transparent 100%);
+    animation: talk-pulse 0.3s ease-in-out infinite alternate;
+    pointer-events: none;
+  }
+
+  @keyframes talk-pulse {
+    0% { opacity: 0.3; transform: scaleY(0.8); }
+    100% { opacity: 1; transform: scaleY(1.1); }
+  }
+
+  .portrait-gem {
+    position: absolute;
+    bottom: -4px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #3a3020;
+    border: 1px solid #6b5644;
+    transition: all 0.3s;
+  }
+
+  .portrait-gem.active {
+    background: #4ade80;
+    box-shadow: 0 0 8px #4ade80;
+    border-color: #4ade80;
+  }
+
+  .header-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
   }
 
   .chat-title {
@@ -165,6 +305,25 @@
     text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
   }
 
+  .mayor-name {
+    font-size: 9px;
+    color: #6b5644;
+    letter-spacing: 1px;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.6);
+    transition: color 0.3s;
+  }
+
+  .mayor-name.talking {
+    color: #4ade80;
+    animation: name-glow 0.6s ease-in-out infinite alternate;
+  }
+
+  @keyframes name-glow {
+    0% { text-shadow: 1px 1px 2px rgba(0,0,0,0.6); }
+    100% { text-shadow: 0 0 6px rgba(74,222,128,0.4), 1px 1px 2px rgba(0,0,0,0.6); }
+  }
+
+  /* ---- Chat Messages ---- */
   .chat-messages {
     flex: 1;
     overflow-y: auto;

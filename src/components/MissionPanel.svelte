@@ -1,5 +1,11 @@
 <script lang="ts">
-  import { townStatus } from '../lib/stores';
+  import { townStatus, selectedRig, selectedUnit } from '../lib/stores';
+  import type { Rig } from '../lib/gt-client';
+
+  function selectRig(rig: Rig) {
+    selectedUnit.set(null);
+    selectedRig.set(rig);
+  }
 
   $: allRigs = [...($townStatus?.rigs ?? [])].sort((a, b) => a.name.localeCompare(b.name));
   $: activeRigs = allRigs.filter(r => r.agents.some(a => a.running));
@@ -20,7 +26,9 @@
   <div class="panel-body">
     {#if activeRigs.length > 0}
       {#each activeRigs as rig}
-        <div class="mission-card">
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="mission-card" on:click={() => selectRig(rig)}>
           <div class="priority-circle" style="background: {priorityColor(rig)}; box-shadow: 0 0 8px {priorityColor(rig)}"></div>
           <div class="mission-info">
             <div class="mission-name">{rig.name}</div>
@@ -44,7 +52,9 @@
     {#if dockedRigs.length > 0}
       <div class="section-label">DOCKED</div>
       {#each dockedRigs as rig}
-        <div class="rig-row docked">
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="rig-row docked" on:click={() => selectRig(rig)}>
           <span class="rig-dot"></span>
           <span class="rig-name">{rig.name}</span>
         </div>
@@ -120,6 +130,7 @@
     align-items: flex-start;
     border: 1px solid rgba(107, 86, 68, 0.3);
     transition: all 0.2s;
+    cursor: pointer;
   }
 
   .mission-card:hover {

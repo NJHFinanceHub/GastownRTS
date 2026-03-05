@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { selectedRig, selectedUnit, addNotification } from '../lib/stores';
-  import { runCommand } from '../lib/gt-client';
+  import { selectedRig, selectedUnit, addNotification, addChatMessage } from '../lib/stores';
+  import { runCommand, sendMail } from '../lib/gt-client';
 
   // Keyboard shortcuts
   function handleKeydown(e: KeyboardEvent) {
@@ -83,7 +83,13 @@
         {
           id: 'mail-hero', label: 'Mail', icon: '\u{1F4E8}', hotkey: 'M', needsRig: false, color: '#d4af37',
           action: async () => {
-            addNotification(`Composing mail to ${u.name}...`, 'info');
+            const res = await sendMail(`${u.rig}/${u.name}`, 'Orders from HQ', 'Check in and report status.');
+            if (res.success) {
+              addNotification(`Mail sent to ${u.name}`, 'success');
+              addChatMessage('system', `Mail sent to ${u.name}`);
+            } else {
+              addNotification(res.error ?? 'Mail failed', 'error');
+            }
           }
         },
         {
@@ -137,7 +143,8 @@
       id: 'nudge', label: 'Nudge', icon: '\u{1F4E2}', hotkey: 'N', needsRig: true, color: '#4fc3f7',
       action: async () => {
         if (!$selectedRig) return;
-        addNotification(`Nudge ${$selectedRig.name}`, 'info');
+        const res = await runCommand(`nudge ${$selectedRig.name} "Check in from HQ"`, true);
+        addNotification(res.success ? `Nudged ${$selectedRig.name}` : (res.error ?? 'Failed'), res.success ? 'success' : 'error');
       }
     },
     {

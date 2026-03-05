@@ -59,7 +59,6 @@ export function addNotification(message: string, type: Notification['type'] = 'i
 export const rigs = derived(townStatus, $s =>
   [...($s?.rigs ?? [])].sort((a, b) => a.name.localeCompare(b.name))
 );
-export const agents = derived(townStatus, $s => $s?.agents ?? []);
 export const unreadMail = derived(mailInbox, $m => $m?.unread_count ?? 0);
 export const totalAgents = derived(townStatus, $s => {
   if (!$s) return 0;

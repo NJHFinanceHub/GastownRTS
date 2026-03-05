@@ -1,9 +1,24 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { selectedRig, rigBeads, selectedUnit } from '../lib/stores';
+  import { selectedRig, rigBeads, selectedUnit, addNotification, addChatMessage } from '../lib/stores';
   import type { SelectedUnit } from '../lib/stores';
-  import { getRigBeads } from '../lib/gt-client';
-  import type { RigBead } from '../lib/gt-client';
+  import { getRigBeads, runCommand } from '../lib/gt-client';
+  import type { RigBead, Polecat } from '../lib/gt-client';
+
+  // Peon popover state
+  let popover: { name: string; status: string; hook?: string; rig: string; x: number; y: number } | null = null;
+
+  function showPopover(polecat: { name: string; status: string; hook?: string; rig: string }, x: number, y: number) {
+    popover = { ...polecat, x, y };
+  }
+
+  function hidePopover() { popover = null; }
+
+  async function nudgePeon(name: string, rigName: string) {
+    const res = await runCommand(`nudge ${rigName}/${name} "Check in"`, true);
+    addNotification(res.success ? `Nudged ${name}` : (res.error ?? 'Failed'), res.success ? 'success' : 'error');
+    hidePopover();
+  }
 
   $: rig = $selectedRig;
   $: beads = $rigBeads;
@@ -11,35 +26,39 @@
   $: polecatCount = rig?.polecat_count ?? 0;
   $: polecats = rig?.polecats ?? [];
   $: crews = rig?.crews ?? [];
-  $: busyCount = polecats.filter(p => p.status === 'busy' || p.status === 'running').length;
+  $: busyPolecats = polecats.filter(p => p.status === 'busy' || p.status === 'running');
+  $: idlePolecats = polecats.filter(p => p.status !== 'busy' && p.status !== 'running');
 
-  const buildingIcons: Record<string, string> = {
-    traingame: '\u{1F3F0}', thenazerene: '\u{26EA}', uiagentrts: '\u{1F5FC}',
-    beads: '\u{1F48E}', gastown: '\u{26FD}', brokerbuster: '\u{1F4B0}',
-    intent2software: '\u{1F4A1}', giftwebsite: '\u{1F381}', ofspcalc: '\u{1F9EE}',
-    ofspfarmassistant: '\u{1F33E}', slipmap: '\u{1F5FA}', lancepoint: '\u{1F3AF}',
-  };
+  // ---- Building Layout ----
+  // Work pipeline: Gold Mine → Hooks Post → Refinery (the assembly line)
+  const MINE     = { x: 82, y: 62 };
+  const HOOKS    = { x: 50, y: 42 };
+  const REFINERY = { x: 78, y: 20 };
+  const BARRACKS = { x: 18, y: 55 };
+  const WITNESS  = { x: 15, y: 20 };
+  const TOWNHALL = { x: 50, y: 8 };
 
-  // Building positions (percentage-based)
   const buildings = [
-    { id: 'townhall', label: 'TOWN HALL', icon: '\u{1F3DB}', x: 50, y: 12, glowColor: '#d4af37' },
-    { id: 'witness', label: 'WITNESS', icon: '\u{1F441}', x: 15, y: 22, glowColor: '#4ade80' },
-    { id: 'refinery', label: 'REFINERY', icon: '\u{2697}\u{FE0F}', x: 78, y: 25, glowColor: '#a78bfa' },
-    { id: 'hooks', label: 'HOOKS POST', icon: '\u{1FA9D}', x: 50, y: 45, glowColor: '#ffa500' },
-    { id: 'barracks', label: 'BARRACKS', icon: '\u{1F3DA}', x: 22, y: 58, glowColor: '#4fc3f7' },
-    { id: 'goldmine', label: 'GOLD MINE', icon: '\u{26CF}\u{FE0F}', x: 82, y: 68, glowColor: '#ffd700' },
+    { id: 'townhall', label: 'TOWN HALL',  icon: '\u{1F3DB}', ...TOWNHALL, glowColor: '#d4af37' },
+    { id: 'witness',  label: 'WITNESS',    icon: '\u{1F441}', ...WITNESS,  glowColor: '#4ade80' },
+    { id: 'refinery', label: 'REFINERY',   icon: '\u{2697}\u{FE0F}', ...REFINERY, glowColor: '#a78bfa' },
+    { id: 'hooks',    label: 'HOOKS POST', icon: '\u{1FA9D}', ...HOOKS,    glowColor: '#ffa500' },
+    { id: 'barracks', label: 'BARRACKS',   icon: '\u{1F3DA}', ...BARRACKS, glowColor: '#4fc3f7' },
+    { id: 'goldmine', label: 'GOLD MINE',  icon: '\u{26CF}\u{FE0F}', ...MINE, glowColor: '#ffd700' },
   ];
 
-  // SVG paths connecting buildings
+  // SVG paths — the work pipeline is the main road
   const paths = [
-    { x1: 50, y1: 12, x2: 15, y2: 22 }, // townhall → witness
-    { x1: 50, y1: 12, x2: 78, y2: 25 }, // townhall → refinery
-    { x1: 50, y1: 12, x2: 50, y2: 45 }, // townhall → hooks
-    { x1: 15, y1: 22, x2: 22, y2: 58 }, // witness → barracks
-    { x1: 78, y1: 25, x2: 82, y2: 68 }, // refinery → goldmine
-    { x1: 50, y1: 45, x2: 22, y2: 58 }, // hooks → barracks
-    { x1: 50, y1: 45, x2: 82, y2: 68 }, // hooks → goldmine
-    { x1: 22, y1: 58, x2: 82, y2: 68 }, // barracks → goldmine (peon route)
+    // Pipeline: Mine → Hooks → Refinery
+    { x1: MINE.x, y1: MINE.y, x2: HOOKS.x, y2: HOOKS.y, main: true },
+    { x1: HOOKS.x, y1: HOOKS.y, x2: REFINERY.x, y2: REFINERY.y, main: true },
+    // Secondary roads
+    { x1: TOWNHALL.x, y1: TOWNHALL.y, x2: HOOKS.x, y2: HOOKS.y, main: false },
+    { x1: TOWNHALL.x, y1: TOWNHALL.y, x2: WITNESS.x, y2: WITNESS.y, main: false },
+    { x1: TOWNHALL.x, y1: TOWNHALL.y, x2: REFINERY.x, y2: REFINERY.y, main: false },
+    { x1: WITNESS.x, y1: WITNESS.y, x2: BARRACKS.x, y2: BARRACKS.y, main: false },
+    { x1: BARRACKS.x, y1: BARRACKS.y, x2: HOOKS.x, y2: HOOKS.y, main: false },
+    { x1: BARRACKS.x, y1: BARRACKS.y, x2: MINE.x, y2: MINE.y, main: false },
   ];
 
   function isActive(id: string): boolean {
@@ -60,20 +79,27 @@
     return null;
   }
 
-  // Tooltip
+  // ---- Tooltip ----
   let tooltip: { x: number; y: number; lines: string[] } | null = null;
 
   function showTooltip(b: typeof buildings[0], e: MouseEvent) {
     const lines: string[] = [b.label];
-    if (b.id === 'witness') lines.push(rig?.has_witness ? 'Active' : 'Offline');
-    if (b.id === 'refinery') lines.push(rig?.has_refinery ? 'Processing' : 'Offline');
+    if (b.id === 'witness') lines.push(rig?.has_witness ? 'Active — monitoring polecats' : 'Offline');
+    if (b.id === 'refinery') lines.push(rig?.has_refinery ? 'Active — processing merge queue' : 'Offline');
     if (b.id === 'goldmine') {
+      lines.push(`${beads.length} open bead${beads.length !== 1 ? 's' : ''}`);
       beads.slice(0, 5).forEach(bd => {
-        lines.push(`${'*'.repeat(Math.max(1, 4 - bd.priority))} ${bd.title.slice(0, 30)}`);
+        const pips = '\u{2B50}'.repeat(Math.max(1, 4 - bd.priority));
+        lines.push(`${pips} ${bd.title.slice(0, 35)}`);
       });
-      if (beads.length === 0) lines.push('No open beads');
     }
-    if (b.id === 'barracks') lines.push(`${polecatCount} polecat${polecatCount !== 1 ? 's' : ''} (${busyCount} busy)`);
+    if (b.id === 'barracks') {
+      lines.push(`${busyPolecats.length} busy / ${idlePolecats.length} idle`);
+      polecats.slice(0, 4).forEach(p => {
+        const icon = (p.status === 'busy' || p.status === 'running') ? '\u{1F528}' : '\u{1F4A4}';
+        lines.push(`${icon} ${p.name}: ${p.hook?.slice(0, 25) ?? 'idle'}`);
+      });
+    }
     if (b.id === 'hooks') lines.push(`${activeHooks} active hook${activeHooks !== 1 ? 's' : ''}`);
     if (b.id === 'townhall') lines.push(rig?.name ?? 'HQ');
     tooltip = { x: e.clientX, y: e.clientY, lines };
@@ -81,6 +107,7 @@
 
   function hideTooltip() { tooltip = null; }
 
+  // ---- Unit Selection ----
   function goBack() {
     selectedRig.set(null);
     rigBeads.set([]);
@@ -108,17 +135,6 @@
 
   $: currentUnit = $selectedUnit;
 
-  function relativeTime(iso: string): string {
-    if (!iso) return '';
-    const diff = Date.now() - new Date(iso).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return 'just now';
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    return `${Math.floor(hrs / 24)}d ago`;
-  }
-
   function priorityColor(p: number): string {
     if (p <= 1) return '#ff4444';
     if (p === 2) return '#ffa500';
@@ -131,7 +147,7 @@
     getRigBeads(rig.name).then(items => rigBeads.set(items));
   }
 
-  // ---- Canvas ----
+  // ---- Canvas Background ----
   let canvas: HTMLCanvasElement;
 
   function seededRandom(seed: number): number {
@@ -146,7 +162,6 @@
     const w = canvas.width;
     const h = canvas.height;
 
-    // Base green terrain
     const bg = ctx.createRadialGradient(w/2, h/2, 0, w/2, h/2, Math.max(w,h)*0.7);
     bg.addColorStop(0, '#2d5a2d');
     bg.addColorStop(0.6, '#1a3a1a');
@@ -154,8 +169,7 @@
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, w, h);
 
-    // Grass texture
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 40; i++) {
       const fx = seededRandom(i * 11 + 1) * w;
       const fy = seededRandom(i * 11 + 2) * h;
       const fr = seededRandom(i * 11 + 3) * 40 + 15;
@@ -166,23 +180,19 @@
       ctx.fill();
     }
 
-    // Light brown patches under building positions
-    const buildingSpots = [
-      { x: 0.50, y: 0.12 }, { x: 0.15, y: 0.22 }, { x: 0.78, y: 0.25 },
-      { x: 0.50, y: 0.45 }, { x: 0.22, y: 0.58 }, { x: 0.82, y: 0.68 },
-      { x: 0.50, y: 0.78 },
-    ];
-    for (const spot of buildingSpots) {
-      const sx = spot.x * w;
-      const sy = spot.y * h;
-      const gr = ctx.createRadialGradient(sx, sy, 0, sx, sy, 50);
-      gr.addColorStop(0, 'rgba(90, 70, 40, 0.25)');
+    // Cleared ground under buildings
+    const spots = [TOWNHALL, WITNESS, REFINERY, HOOKS, BARRACKS, MINE, { x: 50, y: 80 }];
+    for (const spot of spots) {
+      const sx = (spot.x / 100) * w;
+      const sy = (spot.y / 100) * h;
+      const gr = ctx.createRadialGradient(sx, sy, 0, sx, sy, 55);
+      gr.addColorStop(0, 'rgba(90, 70, 40, 0.3)');
       gr.addColorStop(1, 'rgba(90, 70, 40, 0)');
       ctx.fillStyle = gr;
-      ctx.fillRect(sx - 60, sy - 60, 120, 120);
+      ctx.fillRect(sx - 65, sy - 65, 130, 130);
     }
 
-    // Warm interior lighting
+    // Warm lighting
     const warm = ctx.createRadialGradient(w * 0.5, h * 0.3, 0, w * 0.5, h * 0.3, w * 0.6);
     warm.addColorStop(0, 'rgba(212, 175, 55, 0.06)');
     warm.addColorStop(1, 'rgba(0, 0, 0, 0)');
@@ -190,75 +200,98 @@
     ctx.fillRect(0, 0, w, h);
   }
 
-  // ---- Peon Movement System ----
+  // ---- Peon Animation System ----
+  // Busy polecats follow the work pipeline: Mine → Hooks → Refinery → Mine (loop)
+  // Idle polecats wander near Barracks
   interface PeonAnim {
     id: string;
+    name: string;
     x: number;
     y: number;
     targetX: number;
     targetY: number;
     speed: number;
     busy: boolean;
+    carrying: string | null; // bead title being carried
     paused: boolean;
     pauseUntil: number;
-    phase: number; // 0=toMine, 1=toBarracks for busy; random for idle
-    name: string;
+    waypointIdx: number; // index into waypoints array
   }
 
+  // The assembly line waypoints for busy polecats — faster cycle
+  const PIPELINE = [
+    { x: MINE.x,     y: MINE.y,     pause: 800 },  // pick up bead
+    { x: HOOKS.x,    y: HOOKS.y,    pause: 600 },   // hook assignment
+    { x: REFINERY.x, y: REFINERY.y, pause: 1200 },  // deliver to refinery
+  ];
+
   let peonAnims: PeonAnim[] = [];
-  let animFrame: number;
+  let animInterval: ReturnType<typeof setInterval>;
+
+  // Pulse rings when peons arrive at buildings
+  interface PulseRing { x: number; y: number; startTime: number; id: number }
+  let pulseRings: PulseRing[] = [];
+  let pulseId = 0;
 
   function initPeons() {
     const anims: PeonAnim[] = [];
-    const pList = polecats.length > 0 ? polecats : (polecatCount > 0 ? Array.from({ length: polecatCount }, (_, i) => ({
-      name: `polecat-${i + 1}`, status: 'active', rig: rig?.name ?? '', hook: undefined
-    })) : []);
+    const pList: Polecat[] = polecats.length > 0 ? polecats : (polecatCount > 0
+      ? Array.from({ length: polecatCount }, (_, i) => ({
+          name: `polecat-${i + 1}`, status: 'active', rig: rig?.name ?? '', hook: undefined
+        }))
+      : []);
 
     pList.forEach((p, i) => {
       const busy = p.status === 'busy' || p.status === 'running';
-      // Spread peons between barracks and gold mine
-      const startX = busy ? 22 + seededRandom(i * 7 + 1) * 60 : 18 + seededRandom(i * 7 + 2) * 12;
-      const startY = busy ? 58 + seededRandom(i * 7 + 3) * 10 : 54 + seededRandom(i * 7 + 4) * 12;
+      const hookTitle = p.hook?.replace(/^[a-z]+-[a-z0-9]+:\s*/i, '') ?? null;
+      // Stagger peons along the pipeline based on index
+      const startWaypoint = busy ? (i % PIPELINE.length) : 0;
+      const startPos = busy ? PIPELINE[startWaypoint] : { x: BARRACKS.x, y: BARRACKS.y };
+      const jitterX = seededRandom(i * 13 + 1) * 6 - 3;
+      const jitterY = seededRandom(i * 13 + 2) * 6 - 3;
+
+      const nextWaypoint = busy ? ((startWaypoint + 1) % PIPELINE.length) : 0;
+      const target = busy ? PIPELINE[nextWaypoint] : {
+        x: BARRACKS.x + seededRandom(i * 13 + 5) * 14 - 7,
+        y: BARRACKS.y + seededRandom(i * 13 + 6) * 14 - 7,
+      };
+
       anims.push({
         id: `peon-${i}`,
-        x: startX,
-        y: startY,
-        targetX: busy ? 82 : 18 + seededRandom(i * 7 + 5) * 12,
-        targetY: busy ? 68 : 54 + seededRandom(i * 7 + 6) * 12,
-        speed: 0.02 + seededRandom(i * 7 + 7) * 0.015,
+        name: p.name,
+        x: startPos.x + jitterX,
+        y: startPos.y + jitterY,
+        targetX: target.x + seededRandom(i * 13 + 3) * 4 - 2,
+        targetY: target.y + seededRandom(i * 13 + 4) * 4 - 2,
+        speed: 0.03 + seededRandom(i * 13 + 7) * 0.02,
         busy,
+        carrying: busy ? hookTitle : null,
         paused: false,
         pauseUntil: 0,
-        phase: 0,
-        name: p.name,
+        waypointIdx: startWaypoint,
       });
     });
     peonAnims = anims;
   }
 
+  // Runs at 150ms intervals — CSS transitions handle smooth visual movement
   function animatePeons() {
     const now = performance.now();
-    let changed = false;
 
     for (const p of peonAnims) {
       if (p.paused) {
         if (now < p.pauseUntil) continue;
         p.paused = false;
-        // Pick next target
+
         if (p.busy) {
-          p.phase = p.phase === 0 ? 1 : 0;
-          if (p.phase === 0) {
-            p.targetX = 82 + (Math.random() - 0.5) * 6;
-            p.targetY = 68 + (Math.random() - 0.5) * 6;
-          } else {
-            p.targetX = 22 + (Math.random() - 0.5) * 6;
-            p.targetY = 58 + (Math.random() - 0.5) * 6;
-          }
+          p.waypointIdx = (p.waypointIdx + 1) % PIPELINE.length;
+          const wp = PIPELINE[p.waypointIdx];
+          p.targetX = wp.x + (Math.random() - 0.5) * 6;
+          p.targetY = wp.y + (Math.random() - 0.5) * 6;
         } else {
-          p.targetX = 18 + Math.random() * 12;
-          p.targetY = 54 + Math.random() * 12;
+          p.targetX = BARRACKS.x + (Math.random() - 0.5) * 18;
+          p.targetY = BARRACKS.y + (Math.random() - 0.5) * 18;
         }
-        changed = true;
         continue;
       }
 
@@ -266,20 +299,29 @@
       const dy = p.targetY - p.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
 
-      if (dist < 1) {
-        // Arrived — pause
+      if (dist < 1.5) {
         p.paused = true;
-        p.pauseUntil = now + 800 + Math.random() * 1200;
-        changed = true;
+        if (p.busy) {
+          p.pauseUntil = now + PIPELINE[p.waypointIdx].pause + Math.random() * 400;
+          pulseRings = [...pulseRings, { x: p.x, y: p.y, startTime: now, id: ++pulseId }];
+        } else {
+          p.pauseUntil = now + 1000 + Math.random() * 1500;
+        }
       } else {
-        p.x += (dx / dist) * p.speed * 16;
-        p.y += (dy / dist) * p.speed * 16;
-        changed = true;
+        // Move multiple steps to compensate for 150ms interval
+        const step = p.speed * 150;
+        p.x += (dx / dist) * Math.min(step, dist);
+        p.y += (dy / dist) * Math.min(step, dist);
       }
     }
 
-    if (changed) peonAnims = peonAnims; // trigger reactivity
-    animFrame = requestAnimationFrame(animatePeons);
+    // Single Svelte reactivity trigger per tick
+    peonAnims = peonAnims;
+
+    // Clean up expired pulse rings
+    if (pulseRings.length > 0) {
+      pulseRings = pulseRings.filter(r => now - r.startTime < 500);
+    }
   }
 
   // ---- Lifecycle ----
@@ -293,47 +335,59 @@
     window.addEventListener('resize', onResize);
     onResize();
     initPeons();
-    animFrame = requestAnimationFrame(animatePeons);
+    // 150ms tick — CSS transitions smooth the visual movement
+    animInterval = setInterval(animatePeons, 150);
     return () => {
       window.removeEventListener('resize', onResize);
-      cancelAnimationFrame(animFrame);
+      clearInterval(animInterval);
     };
   });
 
   onDestroy(() => {
-    if (animFrame) cancelAnimationFrame(animFrame);
+    if (animInterval) clearInterval(animInterval);
   });
 
-  // Re-init peons when rig data changes
-  $: if (rig && polecats) {
-    initPeons();
+  // Only re-init peons when polecat data actually changes
+  let lastPolecatKey = '';
+  $: {
+    const key = polecats.map(p => `${p.name}:${p.status}`).join(',');
+    if (rig && key !== lastPolecatKey) {
+      lastPolecatKey = key;
+      initPeons();
+    }
   }
 </script>
 
 {#if rig}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="interior" on:click|stopPropagation={() => { tooltip = null; }}>
+  <div class="interior" on:click|stopPropagation={() => { tooltip = null; popover = null; }}>
     <canvas bind:this={canvas}></canvas>
 
     <div class="interior-content">
       <!-- Header -->
       <div class="interior-header">
-        <button class="back-btn" on:click={goBack}>&#8592; Back to Town</button>
-        <span class="rig-icon">{buildingIcons[rig.name] ?? '\u{1F3E0}'}</span>
-        <span class="rig-name">{rig.name.toUpperCase()}</span>
-        <span class="agent-count">{rig.agents.filter(a => a.running).length} agents</span>
+        <button class="back-btn" on:click={goBack}>&#8592; TOWN MAP</button>
+        <span class="rig-icon">{rig.name.toUpperCase()}</span>
+        <div class="header-stats">
+          <span class="stat"><span class="stat-val">{polecatCount}</span> peons</span>
+          <span class="stat"><span class="stat-val">{busyPolecats.length}</span> busy</span>
+          <span class="stat"><span class="stat-val">{beads.length}</span> beads</span>
+          <span class="stat"><span class="stat-val">{crews.length}</span> heroes</span>
+        </div>
       </div>
 
-      <!-- Spatial Map Area -->
+      <!-- Spatial Map -->
       <div class="spatial-map">
-        <!-- SVG Dirt Paths -->
+        <!-- SVG Roads -->
         <svg class="path-overlay" viewBox="0 0 100 100" preserveAspectRatio="none">
           {#each paths as p}
             <line
               x1={p.x1} y1={p.y1} x2={p.x2} y2={p.y2}
-              stroke="#8B6914" stroke-width="0.3" stroke-dasharray="1,1"
-              opacity="0.35"
+              stroke={p.main ? '#B8860B' : '#6B4F1A'}
+              stroke-width={p.main ? '0.5' : '0.25'}
+              stroke-dasharray={p.main ? '2,1' : '1,1.5'}
+              opacity={p.main ? 0.5 : 0.25}
             />
           {/each}
         </svg>
@@ -357,7 +411,20 @@
           </div>
         {/each}
 
-        <!-- Peon Sprites -->
+        <!-- Bead items stacked at the Gold Mine -->
+        {#each beads.slice(0, 6) as bead, i}
+          <div
+            class="bead-nugget"
+            style="left: {MINE.x - 8 + (i % 3) * 5}%; top: {MINE.y + 6 + Math.floor(i / 3) * 4}%;
+                   --pip-color: {priorityColor(bead.priority)}"
+            title="{bead.title}"
+          >
+            <span class="nugget-icon">&#128142;</span>
+            <span class="nugget-label">{bead.title.slice(0, 12)}</span>
+          </div>
+        {/each}
+
+        <!-- Peon Sprites (Polecats) -->
         {#each peonAnims as peon}
           {@const selected = currentUnit?.type === 'polecat' && currentUnit?.name === peon.name}
           <div
@@ -365,20 +432,27 @@
             class:busy={peon.busy}
             class:selected
             style="left: {peon.x}%; top: {peon.y}%"
-            on:click|stopPropagation={() => {
+            on:click|stopPropagation={(e) => {
               const p = polecats.find(pl => pl.name === peon.name) ?? {
                 name: peon.name, status: peon.busy ? 'busy' : 'idle',
                 rig: rig?.name ?? '', hook: undefined
               };
               selectPolecat(p);
+              showPopover(p, e.clientX, e.clientY);
             }}
           >
             <div class="peon-circle" class:selected></div>
-            <span class="peon-emoji">{peon.busy ? '\u{1F528}' : '\u{1F6B6}'}</span>
+            <span class="peon-emoji">{peon.busy ? '🔨' : '🚶'}</span>
+            <!-- Name label -->
+            <span class="peon-name-label">{peon.name}</span>
+            <!-- Carrying indicator -->
+            {#if peon.carrying}
+              <span class="peon-cargo">&#128142; {peon.carrying.slice(0, 18)}</span>
+            {/if}
           </div>
         {/each}
 
-        <!-- Hero Units at Rally Point (bottom center) -->
+        <!-- Hero Units at Rally Point -->
         <div class="rally-point">
           {#if crews.length > 0}
             {#each crews as crew, i}
@@ -387,7 +461,7 @@
               <div
                 class="hero-unit"
                 class:selected={heroSelected}
-                style="left: {40 + i * 12}%"
+                style="left: {35 + i * 14}%"
                 on:click|stopPropagation={() => selectCrew(crew)}
               >
                 <div class="hero-circle" class:selected={heroSelected}></div>
@@ -395,11 +469,18 @@
                   {#if isThrall}
                     <img src="/portraits/thrall-dismounted.png" alt="Thrall" class="thrall-img" />
                   {:else}
-                    <span class="hero-emoji-spatial">{crew.name.toLowerCase() === 'majortom' ? '\u{1F680}' : '\u{1F6E1}\u{FE0F}'}</span>
+                    <span class="hero-emoji-spatial">{crew.name.toLowerCase() === 'majortom' ? '🚀' : '🛡️'}</span>
                   {/if}
                 </div>
                 <div class="hero-nameplate">{crew.name}</div>
                 <div class="hero-task">{crew.hook_title ?? crew.state ?? ''}</div>
+                <div class="hero-health-bar">
+                  <div class="hero-health-fill"
+                    class:active={crew.last_active && (Date.now() - new Date(crew.last_active).getTime()) < 60000}
+                    class:stale={crew.last_active && (Date.now() - new Date(crew.last_active).getTime()) >= 60000 && (Date.now() - new Date(crew.last_active).getTime()) < 300000}
+                    class:dead={!crew.last_active || (Date.now() - new Date(crew.last_active).getTime()) >= 300000}
+                  ></div>
+                </div>
               </div>
             {/each}
           {:else}
@@ -407,42 +488,65 @@
           {/if}
         </div>
 
-        <!-- Refinery Smoke Particles -->
+        <!-- Activity Pulse Rings -->
+        {#each pulseRings as ring (ring.id)}
+          <div class="pulse-ring" style="left: {ring.x}%; top: {ring.y}%"></div>
+        {/each}
+
+        <!-- Refinery Smoke -->
         {#if rig.has_refinery}
           {#each Array(5) as _, i}
-            <div
-              class="smoke-particle"
-              style="left: {76 + i * 1.5}%; top: {22}%; animation-delay: {i * 0.6}s"
-            ></div>
+            <div class="smoke-particle" style="left: {REFINERY.x - 2 + i * 1.2}%; top: {REFINERY.y - 3}%; animation-delay: {i * 0.5}s"></div>
           {/each}
         {/if}
 
         <!-- Gold Mine Sparkles -->
         {#if beads.length > 0}
           {#each Array(4) as _, i}
-            <div
-              class="sparkle-particle"
-              style="left: {80 + i * 1.5}%; top: {65 + i * 1.5}%; animation-delay: {i * 0.7}s"
-            ></div>
+            <div class="sparkle-particle" style="left: {MINE.x - 1 + i * 1.5}%; top: {MINE.y - 4 + i}%; animation-delay: {i * 0.6}s"></div>
           {/each}
         {/if}
 
-        <!-- Production Queue Bar -->
+        <!-- Production Queue -->
         {#if polecatCount > 0}
-          <div class="production-bar" style="left: 22%; top: 68%">
-            <div class="prod-fill" style="width: {polecatCount > 0 ? (busyCount / polecatCount) * 100 : 0}%"></div>
-            <span class="prod-text">{busyCount} working</span>
+          <div class="production-bar" style="left: {BARRACKS.x}%; top: {BARRACKS.y + 8}%">
+            <div class="prod-fill" style="width: {polecatCount > 0 ? (busyPolecats.length / polecatCount) * 100 : 0}%"></div>
+            <span class="prod-text">{busyPolecats.length}/{polecatCount} working</span>
           </div>
         {/if}
+
+        <!-- Pipeline status label -->
+        <div class="pipeline-label">
+          PIPELINE: Mine &#8594; Hooks &#8594; Refinery
+        </div>
       </div>
     </div>
 
     <!-- Tooltip -->
     {#if tooltip}
-      <div class="tooltip" style="left: {tooltip.x + 12}px; top: {tooltip.y - 10}px">
-        {#each tooltip.lines as line}
-          <div>{line}</div>
+      <div class="tooltip" style="left: {tooltip.x + 14}px; top: {tooltip.y - 10}px">
+        {#each tooltip.lines as line, i}
+          <div class:tooltip-title={i === 0}>{line}</div>
         {/each}
+      </div>
+    {/if}
+
+    <!-- Peon Popover -->
+    {#if popover}
+      <div class="peon-popover" style="left: {popover.x + 14}px; top: {popover.y - 10}px">
+        <div class="popover-header">
+          <span class="popover-name">{popover.name}</span>
+          <span class="popover-status" class:busy={popover.status === 'busy' || popover.status === 'running'}>
+            {popover.status.toUpperCase()}
+          </span>
+        </div>
+        {#if popover.hook}
+          <div class="popover-hook">{popover.hook}</div>
+        {/if}
+        <div class="popover-actions">
+          <button class="popover-btn nudge" on:click|stopPropagation={() => nudgePeon(popover.name, popover.rig)}>Nudge</button>
+          <button class="popover-btn close" on:click|stopPropagation={hidePopover}>Close</button>
+        </div>
       </div>
     {/if}
   </div>
@@ -451,10 +555,8 @@
 <style>
   .interior {
     position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
     z-index: 50;
     animation: slideIn 0.3s ease-out;
   }
@@ -465,30 +567,28 @@
   }
 
   canvas {
-    width: 100%;
-    height: 100%;
+    width: 100%; height: 100%;
     position: absolute;
-    top: 0;
-    left: 0;
+    top: 0; left: 0;
   }
 
   .interior-content {
     position: relative;
     z-index: 1;
-    width: 100%;
-    height: 100%;
+    width: 100%; height: 100%;
     display: flex;
     flex-direction: column;
     overflow: hidden;
   }
 
+  /* ---- Header ---- */
   .interior-header {
-    padding: 12px 20px;
+    padding: 8px 16px;
     background: linear-gradient(180deg, rgba(61,46,26,0.95) 0%, rgba(45,36,22,0.9) 100%);
     border-bottom: 2px solid #6b5644;
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 14px;
     flex-shrink: 0;
     position: relative;
   }
@@ -496,9 +596,7 @@
   .interior-header::after {
     content: '';
     position: absolute;
-    bottom: -1px;
-    left: 0;
-    right: 0;
+    bottom: -1px; left: 0; right: 0;
     height: 1px;
     background: linear-gradient(90deg, transparent, #d4af37, transparent);
   }
@@ -508,12 +606,12 @@
     border: 1px solid #6b5644;
     color: #d4af37;
     font-family: 'Cinzel', serif;
-    font-size: 11px;
-    font-weight: 600;
-    padding: 6px 14px;
-    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 5px 12px;
+    border-radius: 3px;
     cursor: pointer;
-    letter-spacing: 1px;
+    letter-spacing: 2px;
     transition: all 0.15s;
     text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
   }
@@ -524,24 +622,28 @@
   }
 
   .rig-icon {
-    font-size: 28px;
-    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));
-  }
-
-  .rig-name {
-    font-size: 18px;
+    font-size: 14px;
     font-weight: 800;
     color: #d4af37;
     letter-spacing: 3px;
     text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
-    flex: 1;
   }
 
-  .agent-count {
-    font-size: 11px;
-    color: #b39c7a;
+  .header-stats {
+    display: flex;
+    gap: 14px;
+    margin-left: auto;
+  }
+
+  .stat {
+    font-size: 9px;
+    color: #6b5644;
     letter-spacing: 1px;
-    text-shadow: 1px 1px 2px rgba(0,0,0,0.6);
+  }
+
+  .stat-val {
+    color: #f4e4c1;
+    font-weight: 700;
   }
 
   /* ---- Spatial Map ---- */
@@ -553,10 +655,8 @@
 
   .path-overlay {
     position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
     pointer-events: none;
     z-index: 1;
   }
@@ -571,9 +671,7 @@
     transition: filter 0.2s;
   }
 
-  .building:hover {
-    filter: brightness(1.3);
-  }
+  .building:hover { filter: brightness(1.3); }
 
   .building.active .building-icon {
     filter: drop-shadow(0 0 12px var(--glow-color));
@@ -582,36 +680,33 @@
 
   @keyframes pulse-glow {
     0%, 100% { filter: drop-shadow(0 0 8px var(--glow-color)); }
-    50% { filter: drop-shadow(0 0 20px var(--glow-color)); }
+    50% { filter: drop-shadow(0 0 22px var(--glow-color)); }
   }
 
   .building-icon {
-    font-size: 48px;
+    font-size: 44px;
     filter: drop-shadow(0 3px 6px rgba(0,0,0,0.7));
-    transition: filter 0.3s;
   }
 
   .building-label {
-    font-size: 9px;
+    font-size: 8px;
     font-weight: 700;
     color: #d4af37;
     letter-spacing: 2px;
-    text-shadow: 1px 1px 3px rgba(0,0,0,0.9), 0 0 6px rgba(0,0,0,0.8);
-    margin-top: 4px;
+    text-shadow: 1px 1px 3px rgba(0,0,0,0.95), 0 0 8px rgba(0,0,0,0.9);
+    margin-top: 2px;
     white-space: nowrap;
     font-family: 'Cinzel', serif;
   }
 
   .building-badge {
     position: absolute;
-    top: -4px;
-    right: -8px;
+    top: -6px; right: -10px;
     background: #d4af37;
     color: #1a1409;
     font-size: 10px;
     font-weight: 800;
-    min-width: 18px;
-    height: 18px;
+    min-width: 18px; height: 18px;
     border-radius: 9px;
     display: flex;
     align-items: center;
@@ -621,29 +716,80 @@
     font-family: monospace;
   }
 
+  /* ---- Bead Nuggets at Gold Mine ---- */
+  .bead-nugget {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    z-index: 8;
+    pointer-events: none;
+    text-align: center;
+  }
+
+  .nugget-icon {
+    font-size: 14px;
+    filter: drop-shadow(0 0 4px var(--pip-color));
+  }
+
+  .nugget-label {
+    display: block;
+    font-size: 6px;
+    color: #b39c7a;
+    white-space: nowrap;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.9);
+    font-family: 'Cinzel', serif;
+  }
+
   /* ---- Peon Sprites ---- */
   .peon-sprite {
     position: absolute;
     transform: translate(-50%, -50%);
     z-index: 15;
     cursor: pointer;
-    transition: left 50ms linear, top 50ms linear;
+    transition: left 150ms linear, top 150ms linear;
+    text-align: center;
   }
 
   .peon-emoji {
-    font-size: 18px;
-    filter: drop-shadow(0 2px 3px rgba(0,0,0,0.6));
+    font-size: 20px;
+    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.7));
     display: block;
+  }
+
+  .peon-name-label {
+    display: block;
+    font-size: 7px;
+    font-weight: 700;
+    color: #f4e4c1;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.95), 0 0 4px rgba(0,0,0,0.8);
+    white-space: nowrap;
+    font-family: 'Cinzel', serif;
+    letter-spacing: 0.5px;
+  }
+
+  .peon-cargo {
+    display: block;
+    font-size: 7px;
+    color: #ffd700;
+    text-shadow: 0 0 4px rgba(255,215,0,0.4), 1px 1px 2px rgba(0,0,0,0.9);
+    white-space: nowrap;
+    max-width: 100px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: 'Cinzel', serif;
+    animation: cargo-glow 1.5s ease-in-out infinite alternate;
+  }
+
+  @keyframes cargo-glow {
+    0% { opacity: 0.8; }
+    100% { opacity: 1; }
   }
 
   .peon-circle {
     position: absolute;
-    width: 28px;
-    height: 28px;
+    width: 30px; height: 30px;
     border-radius: 50%;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
+    top: 8px; left: 50%;
+    transform: translateX(-50%);
     pointer-events: none;
     opacity: 0;
   }
@@ -651,27 +797,22 @@
   .peon-circle.selected {
     opacity: 1;
     border: 2px solid #4ade80;
-    box-shadow: 0 0 10px rgba(74,222,128,0.5);
+    box-shadow: 0 0 12px rgba(74,222,128,0.5);
     animation: sel-pulse 1.2s ease-in-out infinite;
   }
 
   @keyframes sel-pulse {
     0%, 100% { box-shadow: 0 0 8px rgba(74,222,128,0.4); }
-    50% { box-shadow: 0 0 16px rgba(74,222,128,0.7); }
+    50% { box-shadow: 0 0 18px rgba(74,222,128,0.7); }
   }
 
-  /* ---- Hero Units ---- */
+  /* ---- Heroes ---- */
   .rally-point {
     position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 22%;
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
+    bottom: 0; left: 0; right: 0;
+    height: 20%;
     z-index: 12;
-    padding-top: 2%;
+    padding-top: 1%;
   }
 
   .hero-unit {
@@ -683,17 +824,13 @@
     transition: transform 0.15s;
   }
 
-  .hero-unit:hover {
-    transform: translate(-50%, -3px);
-  }
+  .hero-unit:hover { transform: translate(-50%, -3px); }
 
   .hero-circle {
     position: absolute;
-    width: 52px;
-    height: 52px;
+    width: 52px; height: 52px;
     border-radius: 50%;
-    top: 50%;
-    left: 50%;
+    top: 50%; left: 50%;
     transform: translate(-50%, -60%);
     pointer-events: none;
     opacity: 0;
@@ -702,18 +839,17 @@
   .hero-circle.selected {
     opacity: 1;
     border: 2px solid #ffd700;
-    box-shadow: 0 0 14px rgba(255,215,0,0.5);
+    box-shadow: 0 0 16px rgba(255,215,0,0.5);
     animation: hero-sel-pulse 1.2s ease-in-out infinite;
   }
 
   @keyframes hero-sel-pulse {
     0%, 100% { box-shadow: 0 0 10px rgba(255,215,0,0.4); }
-    50% { box-shadow: 0 0 22px rgba(255,215,0,0.7); }
+    50% { box-shadow: 0 0 24px rgba(255,215,0,0.7); }
   }
 
   .hero-portrait-spatial {
-    width: 44px;
-    height: 44px;
+    width: 42px; height: 42px;
     border-radius: 4px;
     background: rgba(26,20,9,0.8);
     border: 2px solid #d4af37;
@@ -731,29 +867,26 @@
   }
 
   .thrall-img {
-    width: 40px;
-    height: 40px;
+    width: 38px; height: 38px;
     object-fit: cover;
     object-position: top center;
   }
 
-  .hero-emoji-spatial {
-    font-size: 22px;
-  }
+  .hero-emoji-spatial { font-size: 20px; }
 
   .hero-nameplate {
-    font-size: 9px;
+    font-size: 8px;
     font-weight: 700;
     color: #d4af37;
     letter-spacing: 1px;
-    margin-top: 4px;
+    margin-top: 3px;
     text-shadow: 1px 1px 3px rgba(0,0,0,0.9);
     white-space: nowrap;
     font-family: 'Cinzel', serif;
   }
 
   .hero-task {
-    font-size: 8px;
+    font-size: 7px;
     color: #b39c7a;
     max-width: 80px;
     overflow: hidden;
@@ -762,18 +895,52 @@
     text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
   }
 
+  .hero-health-bar {
+    width: 36px;
+    height: 4px;
+    background: rgba(13,10,5,0.6);
+    border: 1px solid #6b5644;
+    border-radius: 2px;
+    margin: 3px auto 0;
+    overflow: hidden;
+  }
+
+  .hero-health-fill {
+    height: 100%;
+    width: 100%;
+    border-radius: 1px;
+    transition: background 0.5s;
+  }
+
+  .hero-health-fill.active {
+    background: #4ade80;
+    box-shadow: 0 0 4px #4ade80;
+  }
+
+  .hero-health-fill.stale {
+    background: #ffa500;
+    width: 60%;
+  }
+
+  .hero-health-fill.dead {
+    background: #ff4444;
+    width: 25%;
+  }
+
   .empty-rally {
+    position: absolute;
+    left: 50%; top: 30%;
+    transform: translateX(-50%);
     color: #6b5644;
-    font-size: 11px;
+    font-size: 10px;
     font-style: italic;
     text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
   }
 
-  /* ---- Smoke Particles ---- */
+  /* ---- Particles ---- */
   .smoke-particle {
     position: absolute;
-    width: 8px;
-    height: 8px;
+    width: 8px; height: 8px;
     border-radius: 50%;
     background: rgba(167, 139, 250, 0.5);
     z-index: 8;
@@ -782,25 +949,14 @@
   }
 
   @keyframes smoke-rise {
-    0% {
-      opacity: 0.6;
-      transform: translate(0, 0) scale(0.5);
-    }
-    50% {
-      opacity: 0.3;
-      transform: translate(8px, -30px) scale(1.2);
-    }
-    100% {
-      opacity: 0;
-      transform: translate(15px, -60px) scale(2);
-    }
+    0%   { opacity: 0.6; transform: translate(0, 0) scale(0.5); }
+    50%  { opacity: 0.3; transform: translate(8px, -30px) scale(1.2); }
+    100% { opacity: 0;   transform: translate(15px, -60px) scale(2); }
   }
 
-  /* ---- Sparkle Particles ---- */
   .sparkle-particle {
     position: absolute;
-    width: 6px;
-    height: 6px;
+    width: 5px; height: 5px;
     border-radius: 50%;
     background: #ffd700;
     z-index: 8;
@@ -809,31 +965,18 @@
   }
 
   @keyframes sparkle-float {
-    0% {
-      opacity: 0;
-      transform: translate(0, 0) scale(0.3);
-    }
-    30% {
-      opacity: 1;
-      transform: translate(-3px, -10px) scale(1);
-    }
-    70% {
-      opacity: 0.7;
-      transform: translate(5px, -20px) scale(0.8);
-    }
-    100% {
-      opacity: 0;
-      transform: translate(2px, -30px) scale(0.3);
-    }
+    0%   { opacity: 0; transform: translate(0, 0) scale(0.3); }
+    30%  { opacity: 1; transform: translate(-3px, -10px) scale(1); }
+    70%  { opacity: 0.7; transform: translate(5px, -20px) scale(0.8); }
+    100% { opacity: 0; transform: translate(2px, -30px) scale(0.3); }
   }
 
-  /* ---- Production Queue Bar ---- */
+  /* ---- Production Bar ---- */
   .production-bar {
     position: absolute;
     transform: translate(-50%, 0);
-    width: 70px;
-    height: 10px;
-    background: rgba(13, 10, 5, 0.7);
+    width: 80px; height: 10px;
+    background: rgba(13, 10, 5, 0.8);
     border: 1px solid #6b5644;
     border-radius: 3px;
     z-index: 11;
@@ -849,15 +992,29 @@
 
   .prod-text {
     position: absolute;
-    top: -1px;
-    left: 0;
-    right: 0;
+    top: -1px; left: 0; right: 0;
     text-align: center;
     font-size: 7px;
     font-weight: 700;
     color: #f4e4c1;
     text-shadow: 1px 1px 2px rgba(0,0,0,0.9);
     line-height: 10px;
+  }
+
+  /* ---- Pipeline Label ---- */
+  .pipeline-label {
+    position: absolute;
+    bottom: 22%; left: 50%;
+    transform: translateX(-50%);
+    font-size: 8px;
+    color: rgba(212,175,55,0.35);
+    letter-spacing: 3px;
+    font-weight: 700;
+    white-space: nowrap;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+    z-index: 5;
+    font-family: 'Cinzel', serif;
+    pointer-events: none;
   }
 
   /* ---- Tooltip ---- */
@@ -873,15 +1030,139 @@
     color: #f4e4c1;
     font-family: 'Cinzel', serif;
     text-shadow: 1px 1px 2px rgba(0,0,0,0.6);
-    max-width: 250px;
+    max-width: 280px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.6);
     line-height: 1.5;
   }
 
-  .tooltip div:first-child {
+  .tooltip-title {
     font-weight: 700;
     color: #d4af37;
     letter-spacing: 1px;
-    margin-bottom: 2px;
+    margin-bottom: 3px;
+    font-size: 11px;
+  }
+
+  /* ---- Peon Popover ---- */
+  .peon-popover {
+    position: fixed;
+    background: rgba(26, 20, 9, 0.97);
+    border: 2px solid #d4af37;
+    border-radius: 6px;
+    padding: 10px 14px;
+    z-index: 110;
+    min-width: 160px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.7), 0 0 15px rgba(212,175,55,0.15);
+    font-family: 'Cinzel', serif;
+    animation: popover-in 0.15s ease-out;
+  }
+
+  @keyframes popover-in {
+    from { opacity: 0; transform: scale(0.9); }
+    to { opacity: 1; transform: scale(1); }
+  }
+
+  .popover-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+
+  .popover-name {
+    font-size: 12px;
+    font-weight: 700;
+    color: #d4af37;
+    letter-spacing: 1px;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+  }
+
+  .popover-status {
+    font-size: 8px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: rgba(107,86,68,0.3);
+    color: #6b5644;
+    letter-spacing: 1px;
+  }
+
+  .popover-status.busy {
+    background: rgba(74,222,128,0.2);
+    color: #4ade80;
+  }
+
+  .popover-hook {
+    font-size: 9px;
+    color: #b39c7a;
+    margin-bottom: 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.6);
+  }
+
+  .popover-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  .popover-btn {
+    flex: 1;
+    padding: 4px 8px;
+    font-size: 9px;
+    font-weight: 700;
+    font-family: 'Cinzel', serif;
+    border-radius: 3px;
+    cursor: pointer;
+    letter-spacing: 1px;
+    transition: all 0.15s;
+  }
+
+  .popover-btn.nudge {
+    background: rgba(79,195,247,0.2);
+    border: 1px solid #4fc3f7;
+    color: #4fc3f7;
+  }
+
+  .popover-btn.nudge:hover {
+    background: rgba(79,195,247,0.3);
+  }
+
+  .popover-btn.close {
+    background: rgba(107,86,68,0.2);
+    border: 1px solid #6b5644;
+    color: #6b5644;
+  }
+
+  .popover-btn.close:hover {
+    background: rgba(107,86,68,0.3);
+  }
+
+  /* ---- Pulse Rings ---- */
+  .pulse-ring {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    width: 10px; height: 10px;
+    border: 2px solid rgba(212,175,55,0.6);
+    border-radius: 50%;
+    z-index: 7;
+    pointer-events: none;
+    animation: pulse-expand 0.5s ease-out forwards;
+  }
+
+  @keyframes pulse-expand {
+    0% { width: 10px; height: 10px; opacity: 0.8; }
+    100% { width: 50px; height: 50px; opacity: 0; margin-left: -20px; margin-top: -20px; }
+  }
+
+  /* ---- Peon Bounce ---- */
+  .peon-sprite.busy .peon-emoji {
+    animation: peon-bounce 0.8s ease-in-out infinite;
+  }
+
+  @keyframes peon-bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-3px); }
   }
 </style>

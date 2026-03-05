@@ -16,13 +16,12 @@
   .notif-container {
     position: fixed;
     top: 58px;
-    left: 50%;
-    transform: translateX(-50%);
+    right: 16px;
     z-index: 10000;
     display: flex;
     flex-direction: column;
     gap: 6px;
-    align-items: center;
+    align-items: flex-end;
   }
 
   .notif {
@@ -31,7 +30,7 @@
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 1px;
-    animation: slideDown 0.3s ease;
+    animation: slideIn 0.3s ease, fadeOut 0.5s ease 2.5s forwards;
     white-space: nowrap;
     text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
   }
@@ -64,8 +63,13 @@
     box-shadow: 0 4px 16px rgba(0,0,0,0.5), 0 0 10px rgba(255,68,68,0.2);
   }
 
-  @keyframes slideDown {
-    from { opacity: 0; transform: translateY(-12px); }
-    to { opacity: 1; transform: translateY(0); }
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateX(40px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  @keyframes fadeOut {
+    from { opacity: 1; }
+    to { opacity: 0; }
   }
 </style>

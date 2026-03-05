@@ -1,5 +1,27 @@
 <script lang="ts">
-  import { readyItems } from '../lib/stores';
+  import { readyItems, selectedRig, addNotification, addChatMessage } from '../lib/stores';
+  import { runCommand } from '../lib/gt-client';
+
+  async function slingBead(item: { id: string; title: string }) {
+    const rigName = $selectedRig?.name;
+    if (!rigName) {
+      addNotification('Select a rig first to sling work', 'warning');
+      return;
+    }
+    addChatMessage('system', `Slinging ${item.id} to ${rigName}...`);
+    try {
+      const res = await runCommand(`sling ${item.id} ${rigName}`, true);
+      if (res.success) {
+        addNotification(`Slung ${item.id} to ${rigName}`, 'success');
+        addChatMessage('mayor', `Quest "${item.title}" assigned to ${rigName}.`);
+      } else {
+        addNotification(res.error ?? 'Sling failed', 'error');
+        addChatMessage('system', `Sling failed: ${res.error ?? 'Unknown error'}`);
+      }
+    } catch (err: any) {
+      addNotification(err.message, 'error');
+    }
+  }
 
   function priorityColor(p: number): string {
     if (p <= 1) return '#ff4444';
@@ -27,7 +49,9 @@
       <div class="empty">No quests available</div>
     {:else}
       {#each $readyItems as item}
-        <div class="quest-item">
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="quest-item" on:click={() => slingBead(item)} title="Click to sling to selected rig">
           <div class="priority-circle" style="background: {priorityColor(item.priority)}; box-shadow: 0 0 6px {priorityColor(item.priority)}"></div>
           <div class="quest-info">
             <div class="quest-title">{item.title}</div>
