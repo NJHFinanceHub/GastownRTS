@@ -226,7 +226,7 @@
   ];
 
   let peonAnims: PeonAnim[] = [];
-  let animFrame: number;
+  let animInterval: ReturnType<typeof setInterval>;
 
   // Pulse rings when peons arrive at buildings
   interface PulseRing { x: number; y: number; startTime: number; id: number }
@@ -274,9 +274,9 @@
     peonAnims = anims;
   }
 
+  // Runs at 150ms intervals — CSS transitions handle smooth visual movement
   function animatePeons() {
     const now = performance.now();
-    let changed = false;
 
     for (const p of peonAnims) {
       if (p.paused) {
@@ -284,17 +284,14 @@
         p.paused = false;
 
         if (p.busy) {
-          // Advance to next waypoint on the pipeline
           p.waypointIdx = (p.waypointIdx + 1) % PIPELINE.length;
           const wp = PIPELINE[p.waypointIdx];
           p.targetX = wp.x + (Math.random() - 0.5) * 6;
           p.targetY = wp.y + (Math.random() - 0.5) * 6;
         } else {
-          // Idle: wander near barracks
           p.targetX = BARRACKS.x + (Math.random() - 0.5) * 18;
           p.targetY = BARRACKS.y + (Math.random() - 0.5) * 18;
         }
-        changed = true;
         continue;
       }
 
@@ -306,26 +303,25 @@
         p.paused = true;
         if (p.busy) {
           p.pauseUntil = now + PIPELINE[p.waypointIdx].pause + Math.random() * 400;
-          // Emit pulse ring at arrival
           pulseRings = [...pulseRings, { x: p.x, y: p.y, startTime: now, id: ++pulseId }];
         } else {
           p.pauseUntil = now + 1000 + Math.random() * 1500;
         }
-        changed = true;
       } else {
-        const step = p.speed * 16;
-        p.x += (dx / dist) * step;
-        p.y += (dy / dist) * step;
-        changed = true;
+        // Move multiple steps to compensate for 150ms interval
+        const step = p.speed * 150;
+        p.x += (dx / dist) * Math.min(step, dist);
+        p.y += (dy / dist) * Math.min(step, dist);
       }
     }
 
-    if (changed) peonAnims = peonAnims;
-    // Clean up expired pulse rings (500ms lifetime)
+    // Single Svelte reactivity trigger per tick
+    peonAnims = peonAnims;
+
+    // Clean up expired pulse rings
     if (pulseRings.length > 0) {
       pulseRings = pulseRings.filter(r => now - r.startTime < 500);
     }
-    animFrame = requestAnimationFrame(animatePeons);
   }
 
   // ---- Lifecycle ----
@@ -339,15 +335,16 @@
     window.addEventListener('resize', onResize);
     onResize();
     initPeons();
-    animFrame = requestAnimationFrame(animatePeons);
+    // 150ms tick — CSS transitions smooth the visual movement
+    animInterval = setInterval(animatePeons, 150);
     return () => {
       window.removeEventListener('resize', onResize);
-      cancelAnimationFrame(animFrame);
+      clearInterval(animInterval);
     };
   });
 
   onDestroy(() => {
-    if (animFrame) cancelAnimationFrame(animFrame);
+    if (animInterval) clearInterval(animInterval);
   });
 
   // Only re-init peons when polecat data actually changes
@@ -748,7 +745,7 @@
     transform: translate(-50%, -50%);
     z-index: 15;
     cursor: pointer;
-    transition: left 60ms linear, top 60ms linear;
+    transition: left 150ms linear, top 150ms linear;
     text-align: center;
   }
 
