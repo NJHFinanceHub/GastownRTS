@@ -2,57 +2,53 @@
   import { onMount } from 'svelte';
   import { rigs, selectedRig } from '../lib/stores';
   import Building from './Building.svelte';
+  import RigInterior from './RigInterior.svelte';
   import type { Rig } from '../lib/gt-client';
 
   let canvas: HTMLCanvasElement;
 
-  // Predefined building positions for up to 12 rigs
-  const positions = [
-    { x: 20, y: 20 }, { x: 50, y: 15 }, { x: 80, y: 22 },
-    { x: 15, y: 45 }, { x: 45, y: 40 }, { x: 75, y: 48 },
-    { x: 25, y: 70 }, { x: 55, y: 65 }, { x: 82, y: 72 },
-    { x: 35, y: 85 }, { x: 65, y: 82 }, { x: 90, y: 88 },
-  ];
-
-  // Building emoji mapping based on rig name
-  const rigIcons: Record<string, string> = {
-    traingame: '\u{1F3F0}',     // castle
-    thenazerene: '\u{26EA}',    // church
-    uiagentrts: '\u{1F5FC}',    // tower
-    beads: '\u{1F4BF}',         // disc
-    gastown: '\u{26FD}',        // fuel pump
-    wyvern: '\u{1F409}',        // dragon
-    brokerbuster: '\u{1F4B0}',  // money bag
-    intent2software: '\u{1F4A1}', // lightbulb
-    lancepoint: '\u{1F3AF}',    // target
-  };
-
-  function getRigIcon(name: string): string {
-    return rigIcons[name] || '\u{1F3E0}';
+  function getPositions(count: number): Array<{x: number, y: number}> {
+    const cols = 3;
+    const rows = Math.ceil(count / cols);
+    const positions: Array<{x: number, y: number}> = [];
+    for (let i = 0; i < count; i++) {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const xOffset = row % 2 === 1 ? 12 : 0;
+      positions.push({
+        x: 18 + col * 30 + xOffset,
+        y: 15 + row * (70 / rows),
+      });
+    }
+    return positions;
   }
 
-  function getRigStatus(rig: Rig): string {
+  $: positions = getPositions($rigs.length);
+
+  function getRigStatus(rig: Rig): 'active' | 'idle' | 'docked' {
     const running = rig.agents.filter(a => a.running).length;
     if (running === 0) return 'docked';
     if (rig.polecat_count > 0) return 'active';
-    if (running > 0) return 'idle';
-    return 'docked';
+    return 'idle';
   }
 
   function selectRig(rig: Rig) {
-    selectedRig.set(rig);
+    selectedRig.update(current => current?.name === rig.name ? null : rig);
   }
 
   function handleBackgroundClick(e: MouseEvent) {
-    if ((e.target as HTMLElement).classList.contains('terrain-overlay') ||
-        (e.target as HTMLElement).tagName === 'CANVAS') {
-      selectedRig.set(null);
-    }
+    if ((e.target as HTMLElement).closest('.building-card')) return;
+    selectedRig.set(null);
+  }
+
+  // Seeded random for consistent forest
+  function seededRandom(seed: number): number {
+    const x = Math.sin(seed) * 43758.5453123;
+    return x - Math.floor(x);
   }
 
   onMount(() => {
     if (!canvas) return;
-    drawTerrain();
     const onResize = () => {
       canvas.width = canvas.offsetWidth;
       canvas.height = canvas.offsetHeight;
@@ -70,54 +66,63 @@
     const w = canvas.width;
     const h = canvas.height;
 
-    // Base terrain gradient
-    const gradient = ctx.createRadialGradient(w/2, h/2, 0, w/2, h/2, Math.max(w,h)/1.5);
-    gradient.addColorStop(0, '#2d5a2d');
-    gradient.addColorStop(0.5, '#1a4d1a');
-    gradient.addColorStop(1, '#0d260d');
-    ctx.fillStyle = gradient;
+    // Green terrain gradient
+    const bg = ctx.createRadialGradient(w/2, h/2, 0, w/2, h/2, Math.max(w,h)*0.7);
+    bg.addColorStop(0, '#2d5a2d');
+    bg.addColorStop(0.6, '#1a3a1a');
+    bg.addColorStop(1, '#0d260d');
+    ctx.fillStyle = bg;
     ctx.fillRect(0, 0, w, h);
 
-    // Terrain texture
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
-    // Use seeded positions so they don't flicker on redraw
+    // Dark forest patches (50 seeded circles)
     for (let i = 0; i < 50; i++) {
-      const seed = i * 137.5;
-      const x = (seed * 7.3) % w;
-      const y = (seed * 13.7) % h;
-      const size = (seed % 30) + 10;
+      const fx = seededRandom(i * 7 + 1) * w;
+      const fy = seededRandom(i * 7 + 2) * h;
+      const fr = seededRandom(i * 7 + 3) * 60 + 20;
+      const opacity = seededRandom(i * 7 + 4) * 0.15 + 0.05;
+      ctx.fillStyle = `rgba(5, 20, 5, ${opacity})`;
       ctx.beginPath();
-      ctx.arc(x, y, size, 0, Math.PI * 2);
+      ctx.arc(fx, fy, fr, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    // Paths connecting buildings
-    ctx.strokeStyle = 'rgba(139, 90, 43, 0.4)';
-    ctx.lineWidth = 40;
-    ctx.beginPath();
-    ctx.moveTo(w * 0.2, h * 0.3);
-    ctx.quadraticCurveTo(w * 0.4, h * 0.5, w * 0.6, h * 0.4);
-    ctx.lineTo(w * 0.8, h * 0.7);
-    ctx.stroke();
+    // Brown dirt paths between building positions
+    ctx.strokeStyle = 'rgba(107, 86, 68, 0.25)';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    const pos = getPositions(12); // use max positions for paths
+    for (let i = 0; i < pos.length - 1; i++) {
+      const p1 = pos[i];
+      const p2 = pos[i + 1];
+      const x1 = (p1.x / 100) * w;
+      const y1 = (p1.y / 100) * h;
+      const x2 = (p2.x / 100) * w;
+      const y2 = (p2.y / 100) * h;
+      const cx = (x1 + x2) / 2 + (seededRandom(i * 13) - 0.5) * 40;
+      const cy = (y1 + y2) / 2 + (seededRandom(i * 17) - 0.5) * 40;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.quadraticCurveTo(cx, cy, x2, y2);
+      ctx.stroke();
+    }
 
-    // Lighting
-    const lightGradient = ctx.createRadialGradient(w*0.3, h*0.2, 0, w*0.3, h*0.2, w*0.6);
-    lightGradient.addColorStop(0, 'rgba(255, 255, 200, 0.1)');
-    lightGradient.addColorStop(1, 'rgba(255, 255, 200, 0)');
-    ctx.fillStyle = lightGradient;
+    // Warm lighting overlay
+    const warm = ctx.createRadialGradient(w * 0.4, h * 0.3, 0, w * 0.4, h * 0.3, w * 0.5);
+    warm.addColorStop(0, 'rgba(212, 175, 55, 0.04)');
+    warm.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = warm;
     ctx.fillRect(0, 0, w, h);
   }
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="game-view" on:click={handleBackgroundClick}>
+<div class="terrain" on:click={handleBackgroundClick}>
   <canvas bind:this={canvas}></canvas>
-  <div class="terrain-overlay">
+  <div class="building-layer" class:hidden={!!$selectedRig}>
     {#each $rigs as rig, i}
       <Building
         {rig}
-        icon={getRigIcon(rig.name)}
         status={getRigStatus(rig)}
         x={positions[i]?.x ?? 50}
         y={positions[i]?.y ?? 50}
@@ -126,17 +131,21 @@
       />
     {/each}
   </div>
+  {#if $rigs.length === 0}
+    <div class="loading-state">
+      <div class="loading-spinner"></div>
+      <span>Summoning the Town...</span>
+    </div>
+  {/if}
+  <RigInterior />
 </div>
 
 <style>
-  .game-view {
+  .terrain {
     flex: 1;
     position: relative;
-    background:
-      linear-gradient(rgba(0,0,0,0.3), rgba(0,0,0,0.3)),
-      radial-gradient(circle at 50% 50%, #1a4d1a 0%, #0d260d 100%);
-    box-shadow: inset 0 0 100px rgba(0,0,0,0.7);
     overflow: hidden;
+    background: #0d260d;
   }
 
   canvas {
@@ -147,14 +156,45 @@
     left: 0;
   }
 
-  .terrain-overlay {
+  .building-layer {
     position: absolute;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
-    background-image:
-      repeating-linear-gradient(0deg, transparent, transparent 50px, rgba(0,0,0,0.05) 50px, rgba(0,0,0,0.05) 51px),
-      repeating-linear-gradient(90deg, transparent, transparent 50px, rgba(0,0,0,0.05) 50px, rgba(0,0,0,0.05) 51px);
+    transition: opacity 0.3s ease;
+  }
+
+  .building-layer.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .loading-state {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    color: #b39c7a;
+    font-size: 14px;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+    letter-spacing: 2px;
+  }
+
+  .loading-spinner {
+    width: 36px;
+    height: 36px;
+    border: 3px solid #6b5644;
+    border-top-color: #d4af37;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 </style>

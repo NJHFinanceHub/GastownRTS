@@ -151,24 +151,6 @@ app.get('/api/events', async (req, res) => {
   }
 });
 
-// Proxy all other GET /api/* → gt dashboard
-app.get('/api/*', async (req, res) => {
-  try {
-    const url = new URL(req.url, GT_DASHBOARD);
-    const upstream = await fetch(url.toString());
-    const contentType = upstream.headers.get('content-type') || '';
-    if (contentType.includes('json')) {
-      const data = await upstream.json();
-      res.json(data);
-    } else {
-      const text = await upstream.text();
-      res.type(contentType).send(text);
-    }
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // Dolt SQL endpoint for direct bead queries
 app.get('/api/beads/:rig', async (req, res) => {
   try {
@@ -188,14 +170,40 @@ app.get('/api/beads/:rig', async (req, res) => {
     await conn.end();
     res.json({ items: rows, rig: req.params.rig });
   } catch (err: any) {
-    // Fallback: use bd ready via gt dashboard
+    // Fallback: use bd ready via gt dashboard, map to RigBead[] shape
     try {
       const upstream = await fetch(`${GT_DASHBOARD}/api/ready`);
       const data = await upstream.json();
-      res.json(data);
+      const items = (data.items ?? []).map((item: any) => ({
+        id: item.id,
+        title: item.title,
+        type: item.type ?? 'task',
+        status: 'open',
+        priority: item.priority ?? 3,
+        owner: item.owner ?? null,
+      }));
+      res.json({ items, rig: req.params.rig });
     } catch {
       res.status(500).json({ error: err.message });
     }
+  }
+});
+
+// Proxy all other GET /api/* → gt dashboard
+app.get('/api/*', async (req, res) => {
+  try {
+    const url = new URL(req.url, GT_DASHBOARD);
+    const upstream = await fetch(url.toString());
+    const contentType = upstream.headers.get('content-type') || '';
+    if (contentType.includes('json')) {
+      const data = await upstream.json();
+      res.json(data);
+    } else {
+      const text = await upstream.text();
+      res.type(contentType).send(text);
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
