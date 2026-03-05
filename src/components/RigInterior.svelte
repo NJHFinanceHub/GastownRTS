@@ -1,9 +1,24 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { selectedRig, rigBeads, selectedUnit } from '../lib/stores';
+  import { selectedRig, rigBeads, selectedUnit, addNotification, addChatMessage } from '../lib/stores';
   import type { SelectedUnit } from '../lib/stores';
-  import { getRigBeads } from '../lib/gt-client';
+  import { getRigBeads, runCommand } from '../lib/gt-client';
   import type { RigBead, Polecat } from '../lib/gt-client';
+
+  // Peon popover state
+  let popover: { name: string; status: string; hook?: string; rig: string; x: number; y: number } | null = null;
+
+  function showPopover(polecat: { name: string; status: string; hook?: string; rig: string }, x: number, y: number) {
+    popover = { ...polecat, x, y };
+  }
+
+  function hidePopover() { popover = null; }
+
+  async function nudgePeon(name: string, rigName: string) {
+    const res = await runCommand(`nudge ${rigName}/${name} "Check in"`, true);
+    addNotification(res.success ? `Nudged ${name}` : (res.error ?? 'Failed'), res.success ? 'success' : 'error');
+    hidePopover();
+  }
 
   $: rig = $selectedRig;
   $: beads = $rigBeads;
@@ -203,15 +218,20 @@
     waypointIdx: number; // index into waypoints array
   }
 
-  // The assembly line waypoints for busy polecats
+  // The assembly line waypoints for busy polecats — faster cycle
   const PIPELINE = [
-    { x: MINE.x,     y: MINE.y,     pause: 1500 }, // pick up bead
-    { x: HOOKS.x,    y: HOOKS.y,    pause: 1000 }, // hook assignment
-    { x: REFINERY.x, y: REFINERY.y, pause: 2000 }, // deliver to refinery
+    { x: MINE.x,     y: MINE.y,     pause: 800 },  // pick up bead
+    { x: HOOKS.x,    y: HOOKS.y,    pause: 600 },   // hook assignment
+    { x: REFINERY.x, y: REFINERY.y, pause: 1200 },  // deliver to refinery
   ];
 
   let peonAnims: PeonAnim[] = [];
   let animFrame: number;
+
+  // Pulse rings when peons arrive at buildings
+  interface PulseRing { x: number; y: number; startTime: number; id: number }
+  let pulseRings: PulseRing[] = [];
+  let pulseId = 0;
 
   function initPeons() {
     const anims: PeonAnim[] = [];
@@ -243,7 +263,7 @@
         y: startPos.y + jitterY,
         targetX: target.x + seededRandom(i * 13 + 3) * 4 - 2,
         targetY: target.y + seededRandom(i * 13 + 4) * 4 - 2,
-        speed: 0.018 + seededRandom(i * 13 + 7) * 0.012,
+        speed: 0.03 + seededRandom(i * 13 + 7) * 0.02,
         busy,
         carrying: busy ? hookTitle : null,
         paused: false,
@@ -285,9 +305,11 @@
       if (dist < 1.5) {
         p.paused = true;
         if (p.busy) {
-          p.pauseUntil = now + PIPELINE[p.waypointIdx].pause + Math.random() * 800;
+          p.pauseUntil = now + PIPELINE[p.waypointIdx].pause + Math.random() * 400;
+          // Emit pulse ring at arrival
+          pulseRings = [...pulseRings, { x: p.x, y: p.y, startTime: now, id: ++pulseId }];
         } else {
-          p.pauseUntil = now + 1500 + Math.random() * 2000;
+          p.pauseUntil = now + 1000 + Math.random() * 1500;
         }
         changed = true;
       } else {
@@ -299,6 +321,10 @@
     }
 
     if (changed) peonAnims = peonAnims;
+    // Clean up expired pulse rings (500ms lifetime)
+    if (pulseRings.length > 0) {
+      pulseRings = pulseRings.filter(r => now - r.startTime < 500);
+    }
     animFrame = requestAnimationFrame(animatePeons);
   }
 
@@ -324,15 +350,21 @@
     if (animFrame) cancelAnimationFrame(animFrame);
   });
 
-  $: if (rig && polecats) {
-    initPeons();
+  // Only re-init peons when polecat data actually changes
+  let lastPolecatKey = '';
+  $: {
+    const key = polecats.map(p => `${p.name}:${p.status}`).join(',');
+    if (rig && key !== lastPolecatKey) {
+      lastPolecatKey = key;
+      initPeons();
+    }
   }
 </script>
 
 {#if rig}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="interior" on:click|stopPropagation={() => { tooltip = null; }}>
+  <div class="interior" on:click|stopPropagation={() => { tooltip = null; popover = null; }}>
     <canvas bind:this={canvas}></canvas>
 
     <div class="interior-content">
@@ -403,12 +435,13 @@
             class:busy={peon.busy}
             class:selected
             style="left: {peon.x}%; top: {peon.y}%"
-            on:click|stopPropagation={() => {
+            on:click|stopPropagation={(e) => {
               const p = polecats.find(pl => pl.name === peon.name) ?? {
                 name: peon.name, status: peon.busy ? 'busy' : 'idle',
                 rig: rig?.name ?? '', hook: undefined
               };
               selectPolecat(p);
+              showPopover(p, e.clientX, e.clientY);
             }}
           >
             <div class="peon-circle" class:selected></div>
@@ -444,12 +477,24 @@
                 </div>
                 <div class="hero-nameplate">{crew.name}</div>
                 <div class="hero-task">{crew.hook_title ?? crew.state ?? ''}</div>
+                <div class="hero-health-bar">
+                  <div class="hero-health-fill"
+                    class:active={crew.last_active && (Date.now() - new Date(crew.last_active).getTime()) < 60000}
+                    class:stale={crew.last_active && (Date.now() - new Date(crew.last_active).getTime()) >= 60000 && (Date.now() - new Date(crew.last_active).getTime()) < 300000}
+                    class:dead={!crew.last_active || (Date.now() - new Date(crew.last_active).getTime()) >= 300000}
+                  ></div>
+                </div>
               </div>
             {/each}
           {:else}
             <div class="empty-rally">No heroes assigned</div>
           {/if}
         </div>
+
+        <!-- Activity Pulse Rings -->
+        {#each pulseRings as ring (ring.id)}
+          <div class="pulse-ring" style="left: {ring.x}%; top: {ring.y}%"></div>
+        {/each}
 
         <!-- Refinery Smoke -->
         {#if rig.has_refinery}
@@ -486,6 +531,25 @@
         {#each tooltip.lines as line, i}
           <div class:tooltip-title={i === 0}>{line}</div>
         {/each}
+      </div>
+    {/if}
+
+    <!-- Peon Popover -->
+    {#if popover}
+      <div class="peon-popover" style="left: {popover.x + 14}px; top: {popover.y - 10}px">
+        <div class="popover-header">
+          <span class="popover-name">{popover.name}</span>
+          <span class="popover-status" class:busy={popover.status === 'busy' || popover.status === 'running'}>
+            {popover.status.toUpperCase()}
+          </span>
+        </div>
+        {#if popover.hook}
+          <div class="popover-hook">{popover.hook}</div>
+        {/if}
+        <div class="popover-actions">
+          <button class="popover-btn nudge" on:click|stopPropagation={() => nudgePeon(popover.name, popover.rig)}>Nudge</button>
+          <button class="popover-btn close" on:click|stopPropagation={hidePopover}>Close</button>
+        </div>
       </div>
     {/if}
   </div>
@@ -834,6 +898,38 @@
     text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
   }
 
+  .hero-health-bar {
+    width: 36px;
+    height: 4px;
+    background: rgba(13,10,5,0.6);
+    border: 1px solid #6b5644;
+    border-radius: 2px;
+    margin: 3px auto 0;
+    overflow: hidden;
+  }
+
+  .hero-health-fill {
+    height: 100%;
+    width: 100%;
+    border-radius: 1px;
+    transition: background 0.5s;
+  }
+
+  .hero-health-fill.active {
+    background: #4ade80;
+    box-shadow: 0 0 4px #4ade80;
+  }
+
+  .hero-health-fill.stale {
+    background: #ffa500;
+    width: 60%;
+  }
+
+  .hero-health-fill.dead {
+    background: #ff4444;
+    width: 25%;
+  }
+
   .empty-rally {
     position: absolute;
     left: 50%; top: 30%;
@@ -948,5 +1044,128 @@
     letter-spacing: 1px;
     margin-bottom: 3px;
     font-size: 11px;
+  }
+
+  /* ---- Peon Popover ---- */
+  .peon-popover {
+    position: fixed;
+    background: rgba(26, 20, 9, 0.97);
+    border: 2px solid #d4af37;
+    border-radius: 6px;
+    padding: 10px 14px;
+    z-index: 110;
+    min-width: 160px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.7), 0 0 15px rgba(212,175,55,0.15);
+    font-family: 'Cinzel', serif;
+    animation: popover-in 0.15s ease-out;
+  }
+
+  @keyframes popover-in {
+    from { opacity: 0; transform: scale(0.9); }
+    to { opacity: 1; transform: scale(1); }
+  }
+
+  .popover-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+
+  .popover-name {
+    font-size: 12px;
+    font-weight: 700;
+    color: #d4af37;
+    letter-spacing: 1px;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+  }
+
+  .popover-status {
+    font-size: 8px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: rgba(107,86,68,0.3);
+    color: #6b5644;
+    letter-spacing: 1px;
+  }
+
+  .popover-status.busy {
+    background: rgba(74,222,128,0.2);
+    color: #4ade80;
+  }
+
+  .popover-hook {
+    font-size: 9px;
+    color: #b39c7a;
+    margin-bottom: 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.6);
+  }
+
+  .popover-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  .popover-btn {
+    flex: 1;
+    padding: 4px 8px;
+    font-size: 9px;
+    font-weight: 700;
+    font-family: 'Cinzel', serif;
+    border-radius: 3px;
+    cursor: pointer;
+    letter-spacing: 1px;
+    transition: all 0.15s;
+  }
+
+  .popover-btn.nudge {
+    background: rgba(79,195,247,0.2);
+    border: 1px solid #4fc3f7;
+    color: #4fc3f7;
+  }
+
+  .popover-btn.nudge:hover {
+    background: rgba(79,195,247,0.3);
+  }
+
+  .popover-btn.close {
+    background: rgba(107,86,68,0.2);
+    border: 1px solid #6b5644;
+    color: #6b5644;
+  }
+
+  .popover-btn.close:hover {
+    background: rgba(107,86,68,0.3);
+  }
+
+  /* ---- Pulse Rings ---- */
+  .pulse-ring {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    width: 10px; height: 10px;
+    border: 2px solid rgba(212,175,55,0.6);
+    border-radius: 50%;
+    z-index: 7;
+    pointer-events: none;
+    animation: pulse-expand 0.5s ease-out forwards;
+  }
+
+  @keyframes pulse-expand {
+    0% { width: 10px; height: 10px; opacity: 0.8; }
+    100% { width: 50px; height: 50px; opacity: 0; margin-left: -20px; margin-top: -20px; }
+  }
+
+  /* ---- Peon Bounce ---- */
+  .peon-sprite.busy .peon-emoji {
+    animation: peon-bounce 0.8s ease-in-out infinite;
+  }
+
+  @keyframes peon-bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-3px); }
   }
 </style>

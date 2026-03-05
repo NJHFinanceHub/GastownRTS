@@ -1,8 +1,10 @@
 <script lang="ts">
-  import { totalAgents, unreadMail, runningAgents, totalPolecats, connected, townStatus } from '../lib/stores';
+  import { totalAgents, unreadMail, runningAgents, totalPolecats, connected, townStatus, readyItems } from '../lib/stores';
 
   $: rigCount = $townStatus?.rigs?.length ?? 0;
   $: activeRigs = ($townStatus?.rigs ?? []).filter(r => r.agents.some(a => a.running)).length;
+  $: beadCount = $readyItems.length;
+  $: crewCount = ($townStatus?.rigs ?? []).reduce((sum, r) => sum + (r.crew_count || 0), 0);
 </script>
 
 <div class="resource-bar">
@@ -16,26 +18,26 @@
   <div class="resource-group">
     <div class="resource">
       <span class="resource-icon gold">&#9884;</span>
-      <span class="resource-value gold">{activeRigs}<span class="resource-dim">/{rigCount}</span></span>
-      <span class="resource-label">GOLD</span>
+      <span class="resource-value gold">{beadCount}</span>
+      <span class="resource-label">BEADS</span>
     </div>
     <div class="divider"></div>
     <div class="resource">
       <span class="resource-icon lumber">&#127794;</span>
-      <span class="resource-value lumber">{$unreadMail}</span>
-      <span class="resource-label">LUMBER</span>
+      <span class="resource-value lumber">{$totalPolecats}</span>
+      <span class="resource-label">PEONS</span>
     </div>
     <div class="divider"></div>
     <div class="resource">
       <span class="resource-icon food">&#127830;</span>
-      <span class="resource-value food">{$runningAgents}<span class="resource-dim">/{$totalAgents}</span></span>
-      <span class="resource-label">FOOD</span>
+      <span class="resource-value food">{crewCount}</span>
+      <span class="resource-label">CREW</span>
     </div>
     <div class="divider"></div>
     <div class="resource">
       <span class="resource-icon polecats">&#9876;</span>
-      <span class="resource-value polecats">{$totalPolecats}</span>
-      <span class="resource-label">PEONS</span>
+      <span class="resource-value polecats">{activeRigs}<span class="resource-dim">/{rigCount}</span></span>
+      <span class="resource-label">RIGS</span>
     </div>
   </div>
 

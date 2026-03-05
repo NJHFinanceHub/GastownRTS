@@ -1,41 +1,8 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { getStatus, getMailInbox, getReady, connectSSE } from './lib/gt-client';
-  import type { TownStatus } from './lib/gt-client';
-  import { townStatus, mailInbox, readyItems, connected, addNotification } from './lib/stores';
+  import { townStatus, selectedRig, selectedUnit, mailInbox, readyItems, connected, addNotification } from './lib/stores';
 
-  // Enrich rig data with demo polecats and crew for visual testing
-  function enrichWithDemoData(status: TownStatus): TownStatus {
-    return {
-      ...status,
-      rigs: status.rigs.map(rig => {
-        if (rig.name !== 'uiagentrts') return rig;
-        return {
-          ...rig,
-          polecats: [
-            ...(rig.polecats ?? []),
-            { name: 'chrome', rig: 'uiagentrts', status: 'busy', hook: 'ui-nfl: Draw peon sprites' },
-            { name: 'rust', rig: 'uiagentrts', status: 'busy', hook: 'ui-19k: Parallax scrolling' },
-            { name: 'nitro', rig: 'uiagentrts', status: 'idle' },
-          ],
-          polecat_count: (rig.polecat_count || 0) + 3,
-          crews: [
-            ...(rig.crews ?? []),
-            {
-              name: 'Thrall',
-              rig: 'uiagentrts',
-              state: 'commanding',
-              hook: 'ui-pse',
-              hook_title: 'Overseeing particle effects',
-              session: 'thrall-warchief',
-              last_active: new Date(Date.now() - 120000).toISOString(),
-            },
-          ],
-          crew_count: (rig.crew_count || 0) + 1,
-        };
-      }),
-    };
-  }
   import ResourceBar from './components/ResourceBar.svelte';
   import TerrainMap from './components/TerrainMap.svelte';
   import QuestPanel from './components/QuestPanel.svelte';
@@ -44,20 +11,36 @@
   import Minimap from './components/Minimap.svelte';
   import AgentPortrait from './components/AgentPortrait.svelte';
   import ChatPanel from './components/ChatPanel.svelte';
-  import InfoPanel from './components/InfoPanel.svelte';
   import Notification from './components/Notification.svelte';
+
+  import { totalPolecats } from './lib/stores';
 
   let eventSource: EventSource | null = null;
   let refreshTimer: ReturnType<typeof setInterval>;
+  let lastRefreshAgo = '—';
+  let lastRefreshTime = 0;
+  let refreshFlash = '';
+
+  // Update "Xs ago" display
+  function updateRefreshAgo() {
+    if (!lastRefreshTime) { lastRefreshAgo = '—'; return; }
+    const secs = Math.floor((Date.now() - lastRefreshTime) / 1000);
+    lastRefreshAgo = secs < 2 ? 'just now' : `${secs}s ago`;
+  }
 
   async function refresh() {
     try {
-      const status = enrichWithDemoData(await getStatus());
+      const status = await getStatus();
       townStatus.set(status);
       connected.set(true);
+      lastRefreshTime = Date.now();
+      refreshFlash = 'success';
+      setTimeout(() => { refreshFlash = ''; }, 600);
     } catch (err: any) {
       console.error('[refresh] Status failed:', err);
       connected.set(false);
+      refreshFlash = 'error';
+      setTimeout(() => { refreshFlash = ''; }, 600);
     }
     try {
       const mail = await getMailInbox();
@@ -73,20 +56,35 @@
     refresh();
   }
 
+  // Global Escape key handler
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+    if (e.key === 'Escape') {
+      if ($selectedUnit) { selectedUnit.set(null); return; }
+      if ($selectedRig) { selectedRig.set(null); return; }
+    }
+  }
+
+  let agoTimer: ReturnType<typeof setInterval>;
+
   onMount(() => {
     refresh();
     eventSource = connectSSE(
       () => refresh(),
       () => connected.set(false)
     );
-    refreshTimer = setInterval(refresh, 15000);
+    refreshTimer = setInterval(refresh, 5000);
+    agoTimer = setInterval(updateRefreshAgo, 1000);
     window.addEventListener('gt-refresh', handleRefresh);
+    window.addEventListener('keydown', handleKeydown);
   });
 
   onDestroy(() => {
     eventSource?.close();
     clearInterval(refreshTimer);
+    clearInterval(agoTimer);
     window.removeEventListener('gt-refresh', handleRefresh);
+    window.removeEventListener('keydown', handleKeydown);
   });
 </script>
 
@@ -106,7 +104,12 @@
     <CommandGrid />
   </div>
 
-  <InfoPanel />
+  <div class="status-bar" class:flash-success={refreshFlash === 'success'} class:flash-error={refreshFlash === 'error'}>
+    <span>Last refresh: {lastRefreshAgo}</span>
+    <span>Polecats: {$totalPolecats}</span>
+    <span>Beads: {$readyItems.length}</span>
+  </div>
+
   <Notification />
 </div>
 
@@ -160,5 +163,28 @@
     right: 0;
     height: 1px;
     background: linear-gradient(90deg, transparent, #d4af37, transparent);
+  }
+
+  .status-bar {
+    height: 20px;
+    background: #1a1409;
+    border-top: 1px solid #6b5644;
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    gap: 24px;
+    font-size: 9px;
+    color: #6b5644;
+    letter-spacing: 1px;
+    flex-shrink: 0;
+    transition: background 0.3s;
+  }
+
+  .status-bar.flash-success {
+    background: rgba(74,222,128,0.1);
+  }
+
+  .status-bar.flash-error {
+    background: rgba(255,68,68,0.1);
   }
 </style>

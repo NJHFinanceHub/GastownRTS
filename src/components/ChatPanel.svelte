@@ -33,7 +33,7 @@
 
     // Detect if it's a gt command
     if (text.startsWith('gt ') || text.startsWith('bd ')) {
-      const cmd = text.startsWith('gt ') ? text.slice(3) : text;
+      const cmd = text.startsWith('gt ') ? text.slice(3) : text.slice(3);
       addChatMessage('system', `Executing: ${text}`);
       try {
         const res = await runCommand(cmd, true);
@@ -68,11 +68,40 @@
           '  gt <command>  — Run any gt command',
           '  bd <command>  — Run any bd command',
           '  /status       — Refresh dashboard',
+          '  /inbox        — Check mail inbox',
+          '  /read <N>     — Read message N',
           '  /help         — Show this help',
           '  /clear        — Clear chat',
           '',
           'Or just type a message to chat.',
         ].join('\n'));
+      } else if (cmd === 'inbox') {
+        addChatMessage('system', 'Checking mail...');
+        try {
+          const res = await runCommand('mail inbox', false);
+          if (res.success && res.output) {
+            mayorSpeak(2000);
+            addChatMessage('mayor', res.output.trim() || 'Inbox empty.');
+          } else {
+            addChatMessage('system', res.error ?? 'Failed to check mail');
+          }
+        } catch { addChatMessage('system', 'Failed to check mail'); }
+      } else if (cmd === 'read') {
+        const msgNum = parts[1];
+        if (!msgNum) {
+          addChatMessage('system', 'Usage: /read <message-number>');
+        } else {
+          addChatMessage('system', `Reading message ${msgNum}...`);
+          try {
+            const res = await runCommand(`mail read ${msgNum}`, false);
+            if (res.success && res.output) {
+              mayorSpeak(2500);
+              addChatMessage('mayor', res.output.trim());
+            } else {
+              addChatMessage('system', res.error ?? 'Failed to read message');
+            }
+          } catch { addChatMessage('system', 'Failed to read message'); }
+        }
       } else if (cmd === 'clear') {
         chatMessages.set([]);
         addChatMessage('system', 'Chat cleared.');
