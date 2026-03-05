@@ -3,6 +3,13 @@
 
 const API_BASE = '/api';
 
+// Client-side fetch with timeout to prevent UI freezes
+function timedFetch(url: string, opts: RequestInit = {}, timeoutMs = 8000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...opts, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
 export interface TownStatus {
   name: string;
   location: string;
@@ -141,11 +148,11 @@ function extractJSON(raw: string): any {
 
 // Fetch town status
 export async function getStatus(): Promise<TownStatus> {
-  const res = await fetch(`${API_BASE}/run`, {
+  const res = await timedFetch(`${API_BASE}/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ command: 'status --json' }),
-  });
+  }, 12000);
   const data: CommandResponse = await res.json();
   if (data.success && data.output) {
     return extractJSON(data.output);
@@ -156,7 +163,7 @@ export async function getStatus(): Promise<TownStatus> {
 // Fetch mail inbox
 export async function getMailInbox(): Promise<MailInbox> {
   try {
-    const res = await fetch(`${API_BASE}/mail/inbox`);
+    const res = await timedFetch(`${API_BASE}/mail/inbox`);
     const data = await res.json();
     // API may return error wrapper instead of mail data
     if (data.messages) return data;
@@ -168,14 +175,14 @@ export async function getMailInbox(): Promise<MailInbox> {
 
 // Read a specific mail message
 export async function readMail(id: string): Promise<MailMessage> {
-  const res = await fetch(`${API_BASE}/mail/read?id=${encodeURIComponent(id)}`);
+  const res = await timedFetch(`${API_BASE}/mail/read?id=${encodeURIComponent(id)}`);
   return res.json();
 }
 
 // Get ready work items
 export async function getReady(): Promise<ReadyResponse> {
   try {
-    const res = await fetch(`${API_BASE}/ready`);
+    const res = await timedFetch(`${API_BASE}/ready`);
     return await res.json();
   } catch {
     return { items: [], by_source: {}, summary: { total: 0, p1_count: 0, p2_count: 0, p3_count: 0 } };
@@ -184,23 +191,23 @@ export async function getReady(): Promise<ReadyResponse> {
 
 // Get autocomplete options (rigs, polecats, etc)
 export async function getOptions(): Promise<OptionsResponse> {
-  const res = await fetch(`${API_BASE}/options`);
+  const res = await timedFetch(`${API_BASE}/options`);
   return res.json();
 }
 
 // Get crew status
 export async function getCrew(): Promise<{ crew: CrewMember[]; by_rig: Record<string, CrewMember[]>; total: number }> {
-  const res = await fetch(`${API_BASE}/crew`);
+  const res = await timedFetch(`${API_BASE}/crew`);
   return res.json();
 }
 
 // Execute a whitelisted gt command
 export async function runCommand(command: string, confirmed = false): Promise<CommandResponse> {
-  const res = await fetch(`${API_BASE}/run`, {
+  const res = await timedFetch(`${API_BASE}/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ command, confirmed }),
-  });
+  }, 12000);
   return res.json();
 }
 
@@ -219,7 +226,7 @@ export interface RigBead {
 // Fetch open beads for a specific rig
 export async function getRigBeads(rig: string): Promise<RigBead[]> {
   try {
-    const res = await fetch(`${API_BASE}/beads/${encodeURIComponent(rig)}`);
+    const res = await timedFetch(`${API_BASE}/beads/${encodeURIComponent(rig)}`);
     const data = await res.json();
     return data.items ?? [];
   } catch {
@@ -230,7 +237,7 @@ export async function getRigBeads(rig: string): Promise<RigBead[]> {
 // Send mail via JSON endpoint (not shell command)
 export async function sendMail(to: string, subject: string, body: string): Promise<{ success: boolean; error?: string }> {
   try {
-    const res = await fetch(`${API_BASE}/mail/send`, {
+    const res = await timedFetch(`${API_BASE}/mail/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ to, subject, body }),

@@ -10,11 +10,18 @@ const GT_DASHBOARD = 'http://localhost:8080';
 
 let csrfToken: string | null = null;
 
+// Upstream fetch with timeout (prevents hanging when dashboard is down)
+function timedFetch(url: string, opts: RequestInit = {}, timeoutMs = 5000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...opts, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
 // Fetch CSRF token from gt dashboard HTML
 async function fetchCsrfToken(): Promise<string> {
   if (csrfToken) return csrfToken;
   try {
-    const res = await fetch(GT_DASHBOARD);
+    const res = await timedFetch(GT_DASHBOARD, {}, 3000);
     const html = await res.text();
     // <meta name="dashboard-token" content="...">
     const match = html.match(/name="dashboard-token"\s+content="([^"]+)"/);
@@ -57,14 +64,14 @@ app.use((req, res, next) => {
 app.post('/api/run', async (req, res) => {
   try {
     const token = await fetchCsrfToken();
-    const upstream = await fetch(`${GT_DASHBOARD}/api/run`, {
+    const upstream = await timedFetch(`${GT_DASHBOARD}/api/run`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Dashboard-Token': token,
       },
       body: JSON.stringify(req.body),
-    });
+    }, 10000);
     const data = await upstream.json();
     res.json(data);
   } catch (err: any) {
@@ -76,7 +83,7 @@ app.post('/api/run', async (req, res) => {
 app.post('/api/mail/send', async (req, res) => {
   try {
     const token = await fetchCsrfToken();
-    const upstream = await fetch(`${GT_DASHBOARD}/api/mail/send`, {
+    const upstream = await timedFetch(`${GT_DASHBOARD}/api/mail/send`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -95,7 +102,7 @@ app.post('/api/mail/send', async (req, res) => {
 app.post('/api/issues/:action', async (req, res) => {
   try {
     const token = await fetchCsrfToken();
-    const upstream = await fetch(`${GT_DASHBOARD}/api/issues/${req.params.action}`, {
+    const upstream = await timedFetch(`${GT_DASHBOARD}/api/issues/${req.params.action}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -119,7 +126,7 @@ app.get('/api/events', async (req, res) => {
   res.flushHeaders();
 
   try {
-    const upstream = await fetch(`${GT_DASHBOARD}/api/events`);
+    const upstream = await timedFetch(`${GT_DASHBOARD}/api/events`, {}, 5000);
     if (!upstream.body) {
       res.write('event: error\ndata: no upstream body\n\n');
       return res.end();
@@ -172,7 +179,7 @@ app.get('/api/beads/:rig', async (req, res) => {
   } catch (err: any) {
     // Fallback: use bd ready via gt dashboard, map to RigBead[] shape
     try {
-      const upstream = await fetch(`${GT_DASHBOARD}/api/ready`);
+      const upstream = await timedFetch(`${GT_DASHBOARD}/api/ready`);
       const data = await upstream.json();
       const items = (data.items ?? []).map((item: any) => ({
         id: item.id,
@@ -193,7 +200,7 @@ app.get('/api/beads/:rig', async (req, res) => {
 app.get('/api/*', async (req, res) => {
   try {
     const url = new URL(req.url, GT_DASHBOARD);
-    const upstream = await fetch(url.toString());
+    const upstream = await timedFetch(url.toString());
     const contentType = upstream.headers.get('content-type') || '';
     if (contentType.includes('json')) {
       const data = await upstream.json();
